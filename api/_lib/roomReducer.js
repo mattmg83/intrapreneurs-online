@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 const SEAT_ORDER = ['A', 'B', 'C', 'D'];
@@ -6,10 +7,15 @@ const FULL_TURN_ROUND_ADVANCE = 2;
 const macroEvents = JSON.parse(
   readFileSync(new URL('../../src/data/macroEvents.json', import.meta.url), 'utf8'),
 );
-const projects = JSON.parse(readFileSync(new URL('../../src/data/projects.json', import.meta.url), 'utf8'));
+const projects = JSON.parse(
+  readFileSync(new URL('../../src/data/projects.json', import.meta.url), 'utf8'),
+);
 const macroEventLookup = Object.fromEntries(macroEvents.map((event) => [event.id, event]));
 const projectLookup = Object.fromEntries(projects.map((project) => [project.id, project]));
 
+function generateTurnNonce() {
+  return crypto.randomBytes(12).toString('hex');
+}
 function seatSort(a, b) {
   const aIndex = SEAT_ORDER.indexOf(a);
   const bIndex = SEAT_ORDER.indexOf(b);
@@ -167,8 +173,13 @@ function computeFinalScoring(room, joinedSeats) {
     joinedSeats.map((seat) => [seat, computeSeatScoring(room?.seats?.[seat])]),
   );
 
-  const bestScore = Math.max(...joinedSeats.map((seat) => Number(bySeat?.[seat]?.finalScore ?? 0)), 0);
-  const winners = joinedSeats.filter((seat) => Number(bySeat?.[seat]?.finalScore ?? 0) === bestScore);
+  const bestScore = Math.max(
+    ...joinedSeats.map((seat) => Number(bySeat?.[seat]?.finalScore ?? 0)),
+    0,
+  );
+  const winners = joinedSeats.filter(
+    (seat) => Number(bySeat?.[seat]?.finalScore ?? 0) === bestScore,
+  );
 
   return {
     bySeat,
@@ -204,6 +215,7 @@ export function reduceRoomState(room, action) {
         return {
           ...room,
           currentSeat: getNextSeat(joinedSeats, room.currentSeat),
+          turnNonce: generateTurnNonce(),
           turnCount: Number(room.turnCount ?? 0) + 1,
           version: Number(room.version ?? 0) + 1,
         };
@@ -256,6 +268,7 @@ export function reduceRoomState(room, action) {
         ...room,
         seats: resetSeats,
         currentSeat: joinedSeats[0],
+        turnNonce: generateTurnNonce(),
         currentRound: nextRound,
         pendingRoundAdvance: false,
         mustDiscardBySeat: Object.fromEntries(joinedSeats.map((seat) => [seat, 0])),
@@ -270,7 +283,7 @@ export function reduceRoomState(room, action) {
                 ...(macroTransition.macroEvent.id === 'macro-m6' ? { tailwindPickBonus: 1 } : {}),
               },
             ]
-          : room.roundModifiers ?? [],
+          : (room.roundModifiers ?? []),
         decks: macroTransition.decks,
         gameOver: false,
         finalScoring: null,

@@ -56,6 +56,7 @@ describe('POST /api/rooms/:id/act', () => {
                 content: JSON.stringify({
                   version: 7,
                   currentSeat: 'A',
+                  turnNonce: 'tn-1',
                   seats: {
                     A: {
                       tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
@@ -80,6 +81,7 @@ describe('POST /api/rooms/:id/act', () => {
         seat: 'A',
         token: 'abc',
         expectedVersion: 7,
+        expectedTurnNonce: 'tn-1',
         action: { type: 'END_TURN' },
       },
     };
@@ -102,7 +104,6 @@ describe('POST /api/rooms/:id/act', () => {
     expect(updatedRoom.log[0]).toMatchObject({ seat: 'A', type: 'END_TURN' });
   });
 
-
   it('supports ADVANCE_ROUND and reveals macro event for round 2', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
@@ -116,6 +117,7 @@ describe('POST /api/rooms/:id/act', () => {
                 content: JSON.stringify({
                   version: 7,
                   currentSeat: 'A',
+                  turnNonce: 'tn-1',
                   currentRound: 1,
                   totalRounds: 3,
                   turnCount: 0,
@@ -147,6 +149,7 @@ describe('POST /api/rooms/:id/act', () => {
         seat: 'A',
         token: 'abc',
         expectedVersion: 7,
+        expectedTurnNonce: 'tn-1',
         action: { type: 'ADVANCE_ROUND' },
       },
     };
@@ -173,6 +176,7 @@ describe('POST /api/rooms/:id/act', () => {
                 content: JSON.stringify({
                   version: 2,
                   currentSeat: 'A',
+                  turnNonce: 'tn-1',
                   seats: {
                     A: {
                       tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
@@ -196,6 +200,7 @@ describe('POST /api/rooms/:id/act', () => {
                 content: JSON.stringify({
                   version: 3,
                   currentSeat: 'B',
+                  turnNonce: 'tn-1',
                   seats: {
                     A: { connected: true, tokenHash: 'hidden' },
                     B: { connected: true },
@@ -215,6 +220,7 @@ describe('POST /api/rooms/:id/act', () => {
         seat: 'A',
         token: 'abc',
         expectedVersion: 2,
+        expectedTurnNonce: 'tn-1',
         action: { type: 'END_TURN' },
       },
     };
@@ -225,6 +231,55 @@ describe('POST /api/rooms/:id/act', () => {
     expect(res.statusCode).toBe(409);
     expect((res.body as any).latestState.version).toBe(3);
     expect((res.body as any).latestState.seats.A.tokenHash).toBeUndefined();
+  });
+
+  it('rejects stale submissions when expectedTurnNonce does not match current turn nonce', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        {
+          files: {
+            'room.json': {
+              content: JSON.stringify({
+                version: 4,
+                currentSeat: 'A',
+                turnNonce: 'tn-live',
+                seats: {
+                  A: {
+                    tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+                    connected: true,
+                  },
+                  B: { connected: true },
+                },
+              }),
+            },
+          },
+        },
+        { status: 200, headers: { ETag: 'etag-1' } },
+      ),
+    );
+
+    const req = {
+      method: 'POST',
+      query: { id: 'room-1' },
+      body: {
+        seat: 'A',
+        token: 'abc',
+        expectedVersion: 4,
+        expectedTurnNonce: 'tn-stale',
+        action: { type: 'END_TURN' },
+      },
+    };
+    const res = createRes();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(409);
+    expect((res.body as any).error).toBe('Turn nonce mismatch.');
+    expect((res.body as any).latestState.turnNonce).toBe('tn-live');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('applies PICK_ASSET from market, replenishes market, and returns privateDelta', async () => {
@@ -240,6 +295,7 @@ describe('POST /api/rooms/:id/act', () => {
                 content: JSON.stringify({
                   version: 4,
                   currentSeat: 'A',
+                  turnNonce: 'tn-1',
                   seats: {
                     A: {
                       tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
@@ -273,6 +329,7 @@ describe('POST /api/rooms/:id/act', () => {
         seat: 'A',
         token: 'abc',
         expectedVersion: 4,
+        expectedTurnNonce: 'tn-1',
         action: { type: 'PICK_ASSET', cardId: 'asset-a1' },
       },
     };
@@ -316,7 +373,6 @@ describe('POST /api/rooms/:id/act', () => {
     expect(updatedRoom.decks.assetsRound1.drawPile).toEqual(['asset-a5']);
   });
 
-
   it('applies handLimit modifier from macro events when picking assets', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
@@ -330,8 +386,13 @@ describe('POST /api/rooms/:id/act', () => {
                 content: JSON.stringify({
                   version: 4,
                   currentSeat: 'A',
+                  turnNonce: 'tn-1',
                   currentRound: 2,
-                  macroEvent: { id: 'macro-m5', name: 'Talent Exodus', ruleModifiers: { headcountPenalty: 1 } },
+                  macroEvent: {
+                    id: 'macro-m5',
+                    name: 'Talent Exodus',
+                    ruleModifiers: { headcountPenalty: 1 },
+                  },
                   roundModifiers: [{ source: 'macro-m5', handLimit: 6 }],
                   seats: {
                     A: {
@@ -366,6 +427,7 @@ describe('POST /api/rooms/:id/act', () => {
         seat: 'A',
         token: 'abc',
         expectedVersion: 4,
+        expectedTurnNonce: 'tn-1',
         action: { type: 'PICK_ASSET', cardId: 'asset-a1' },
       },
     };
@@ -374,9 +436,23 @@ describe('POST /api/rooms/:id/act', () => {
     await handler(req, res);
 
     expect(res.statusCode).toBe(200);
-    expect((res.body as { room: { seats: Record<string, { handSize: number }> } }).room.seats.A.handSize).toBe(7);
-    expect((res.body as { room: { seats: Record<string, { mustDiscard?: boolean; discardTarget?: number | null }> } }).room.seats.A.mustDiscard).toBe(true);
-    expect((res.body as { room: { seats: Record<string, { mustDiscard?: boolean; discardTarget?: number | null }> } }).room.seats.A.discardTarget).toBe(6);
+    expect(
+      (res.body as { room: { seats: Record<string, { handSize: number }> } }).room.seats.A.handSize,
+    ).toBe(7);
+    expect(
+      (
+        res.body as {
+          room: { seats: Record<string, { mustDiscard?: boolean; discardTarget?: number | null }> };
+        }
+      ).room.seats.A.mustDiscard,
+    ).toBe(true);
+    expect(
+      (
+        res.body as {
+          room: { seats: Record<string, { mustDiscard?: boolean; discardTarget?: number | null }> };
+        }
+      ).room.seats.A.discardTarget,
+    ).toBe(6);
   });
 
   it('applies START_PROJECT from market, replenishes projects market, and keeps current seat until END_TURN', async () => {
@@ -392,6 +468,7 @@ describe('POST /api/rooms/:id/act', () => {
                 content: JSON.stringify({
                   version: 9,
                   currentSeat: 'A',
+                  turnNonce: 'tn-1',
                   seats: {
                     A: {
                       tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
@@ -432,6 +509,7 @@ describe('POST /api/rooms/:id/act', () => {
         seat: 'A',
         token: 'abc',
         expectedVersion: 9,
+        expectedTurnNonce: 'tn-1',
         action: { type: 'START_PROJECT', projectId: 'project-p3' },
       },
     };
@@ -499,6 +577,7 @@ describe('POST /api/rooms/:id/act', () => {
                 content: JSON.stringify({
                   version: 11,
                   currentSeat: 'A',
+                  turnNonce: 'tn-1',
                   seats: {
                     A: {
                       tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
@@ -532,6 +611,7 @@ describe('POST /api/rooms/:id/act', () => {
         seat: 'A',
         token: 'abc',
         expectedVersion: 11,
+        expectedTurnNonce: 'tn-1',
         action: {
           type: 'ALLOCATE_TO_PROJECT',
           projectId: 'project-p2',
@@ -594,6 +674,7 @@ describe('POST /api/rooms/:id/act', () => {
                 content: JSON.stringify({
                   version: 12,
                   currentSeat: 'A',
+                  turnNonce: 'tn-1',
                   seats: {
                     A: {
                       tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
@@ -626,6 +707,7 @@ describe('POST /api/rooms/:id/act', () => {
         seat: 'A',
         token: 'abc',
         expectedVersion: 12,
+        expectedTurnNonce: 'tn-1',
         action: { type: 'PAUSE_PROJECT', projectId: 'project-p2' },
       },
     };
@@ -678,6 +760,7 @@ describe('POST /api/rooms/:id/act', () => {
               content: JSON.stringify({
                 version: 5,
                 currentSeat: 'A',
+                turnNonce: 'tn-1',
                 seats: {
                   A: {
                     tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
@@ -702,6 +785,7 @@ describe('POST /api/rooms/:id/act', () => {
         seat: 'A',
         token: 'abc',
         expectedVersion: 5,
+        expectedTurnNonce: 'tn-1',
         action: { type: 'END_TURN' },
       },
     };
@@ -727,6 +811,7 @@ describe('POST /api/rooms/:id/act', () => {
                 content: JSON.stringify({
                   version: 6,
                   currentSeat: 'B',
+                  turnNonce: 'tn-1',
                   seats: {
                     A: {
                       tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
@@ -753,6 +838,7 @@ describe('POST /api/rooms/:id/act', () => {
         seat: 'A',
         token: 'abc',
         expectedVersion: 6,
+        expectedTurnNonce: 'tn-1',
         action: { type: 'DISCARD_ASSET', cardId: 'asset-a1' },
       },
     };
@@ -784,239 +870,246 @@ describe('POST /api/rooms/:id/act', () => {
   });
 });
 
-  it('enforces round-end discard debts before allowing next round setup', async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+it('enforces round-end discard debts before allowing next round setup', async () => {
+  const fetchMock = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
 
-    fetchMock
-      .mockResolvedValueOnce(
-        jsonResponse(
-          {
-            files: {
-              'room.json': {
-                content: JSON.stringify({
-                  version: 20,
-                  currentSeat: 'A',
-                  currentRound: 1,
-                  totalRounds: 3,
-                  turnCount: 3,
-                  pendingRoundAdvance: false,
-                  mustDiscardBySeat: {},
-                  seats: {
-                    A: {
-                      tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
-                      connected: true,
-                      handSize: 4,
-                      projectsStartedThisRound: 2,
-                    },
-                    B: {
-                      tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
-                      connected: true,
-                      handSize: 3,
-                      projectsStartedThisRound: 0,
-                    },
+  fetchMock
+    .mockResolvedValueOnce(
+      jsonResponse(
+        {
+          files: {
+            'room.json': {
+              content: JSON.stringify({
+                version: 20,
+                currentSeat: 'A',
+                turnNonce: 'tn-1',
+                currentRound: 1,
+                totalRounds: 3,
+                turnCount: 3,
+                pendingRoundAdvance: false,
+                mustDiscardBySeat: {},
+                seats: {
+                  A: {
+                    tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+                    connected: true,
+                    handSize: 4,
+                    projectsStartedThisRound: 2,
                   },
-                  decks: {
-                    projects: { drawPile: ['project-p1'], discardPile: [] },
-                    macroEvents: { drawPile: ['macro-m6'], discardPile: [] },
+                  B: {
+                    tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+                    connected: true,
+                    handSize: 3,
+                    projectsStartedThisRound: 0,
                   },
-                  log: [],
-                }),
-              },
+                },
+                decks: {
+                  projects: { drawPile: ['project-p1'], discardPile: [] },
+                  macroEvents: { drawPile: ['macro-m6'], discardPile: [] },
+                },
+                log: [],
+              }),
             },
           },
-          { status: 200, headers: { ETag: 'etag-1' } },
-        ),
-      )
-      .mockResolvedValueOnce(jsonResponse({}, { status: 200, headers: { ETag: 'etag-2' } }))
-      .mockResolvedValueOnce(
-        jsonResponse(
-          {
-            files: {
-              'room.json': {
-                content: JSON.stringify({
-                  version: 21,
-                  currentSeat: 'A',
-                  currentRound: 1,
-                  totalRounds: 3,
-                  turnCount: 3,
-                  pendingRoundAdvance: true,
-                  mustDiscardBySeat: { A: 0, B: 1 },
-                  seats: {
-                    A: {
-                      tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
-                      connected: true,
-                      handSize: 4,
-                      projectsStartedThisRound: 2,
-                    },
-                    B: {
-                      tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
-                      connected: true,
-                      handSize: 3,
-                      projectsStartedThisRound: 0,
-                    },
+        },
+        { status: 200, headers: { ETag: 'etag-1' } },
+      ),
+    )
+    .mockResolvedValueOnce(jsonResponse({}, { status: 200, headers: { ETag: 'etag-2' } }))
+    .mockResolvedValueOnce(
+      jsonResponse(
+        {
+          files: {
+            'room.json': {
+              content: JSON.stringify({
+                version: 21,
+                currentSeat: 'A',
+                turnNonce: 'tn-1',
+                currentRound: 1,
+                totalRounds: 3,
+                turnCount: 3,
+                pendingRoundAdvance: true,
+                mustDiscardBySeat: { A: 0, B: 1 },
+                seats: {
+                  A: {
+                    tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+                    connected: true,
+                    handSize: 4,
+                    projectsStartedThisRound: 2,
                   },
-                  decks: {
-                    projects: { drawPile: ['project-p1'], discardPile: [] },
-                    macroEvents: { drawPile: ['macro-m6'], discardPile: [] },
+                  B: {
+                    tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+                    connected: true,
+                    handSize: 3,
+                    projectsStartedThisRound: 0,
                   },
-                  log: [],
-                }),
-              },
+                },
+                decks: {
+                  projects: { drawPile: ['project-p1'], discardPile: [] },
+                  macroEvents: { drawPile: ['macro-m6'], discardPile: [] },
+                },
+                log: [],
+              }),
             },
           },
-          { status: 200, headers: { ETag: 'etag-3' } },
-        ),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse(
-          {
-            files: {
-              'room.json': {
-                content: JSON.stringify({
-                  version: 21,
-                  currentSeat: 'A',
-                  currentRound: 1,
-                  totalRounds: 3,
-                  turnCount: 3,
-                  pendingRoundAdvance: true,
-                  mustDiscardBySeat: { A: 0, B: 1 },
-                  seats: {
-                    A: {
-                      tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
-                      connected: true,
-                      handSize: 4,
-                      projectsStartedThisRound: 2,
-                    },
-                    B: {
-                      tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
-                      connected: true,
-                      handSize: 3,
-                      projectsStartedThisRound: 0,
-                    },
+        },
+        { status: 200, headers: { ETag: 'etag-3' } },
+      ),
+    )
+    .mockResolvedValueOnce(
+      jsonResponse(
+        {
+          files: {
+            'room.json': {
+              content: JSON.stringify({
+                version: 21,
+                currentSeat: 'A',
+                turnNonce: 'tn-1',
+                currentRound: 1,
+                totalRounds: 3,
+                turnCount: 3,
+                pendingRoundAdvance: true,
+                mustDiscardBySeat: { A: 0, B: 1 },
+                seats: {
+                  A: {
+                    tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+                    connected: true,
+                    handSize: 4,
+                    projectsStartedThisRound: 2,
                   },
-                  decks: {
-                    projects: { drawPile: ['project-p1'], discardPile: [] },
-                    macroEvents: { drawPile: ['macro-m6'], discardPile: [] },
+                  B: {
+                    tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+                    connected: true,
+                    handSize: 3,
+                    projectsStartedThisRound: 0,
                   },
-                  log: [],
-                }),
-              },
+                },
+                decks: {
+                  projects: { drawPile: ['project-p1'], discardPile: [] },
+                  macroEvents: { drawPile: ['macro-m6'], discardPile: [] },
+                },
+                log: [],
+              }),
             },
           },
-          { status: 200, headers: { ETag: 'etag-4' } },
-        ),
-      )
-      .mockResolvedValueOnce(jsonResponse({}, { status: 200, headers: { ETag: 'etag-5' } }))
-      .mockResolvedValueOnce(
-        jsonResponse(
-          {
-            files: {
-              'room.json': {
-                content: JSON.stringify({
-                  version: 22,
-                  currentSeat: 'A',
-                  currentRound: 1,
-                  totalRounds: 3,
-                  turnCount: 3,
-                  pendingRoundAdvance: true,
-                  mustDiscardBySeat: { A: 0, B: 0 },
-                  seats: {
-                    A: {
-                      tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
-                      connected: true,
-                      handSize: 4,
-                      projectsStartedThisRound: 2,
-                    },
-                    B: {
-                      tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
-                      connected: true,
-                      handSize: 2,
-                      projectsStartedThisRound: 0,
-                    },
+        },
+        { status: 200, headers: { ETag: 'etag-4' } },
+      ),
+    )
+    .mockResolvedValueOnce(jsonResponse({}, { status: 200, headers: { ETag: 'etag-5' } }))
+    .mockResolvedValueOnce(
+      jsonResponse(
+        {
+          files: {
+            'room.json': {
+              content: JSON.stringify({
+                version: 22,
+                currentSeat: 'A',
+                turnNonce: 'tn-1',
+                currentRound: 1,
+                totalRounds: 3,
+                turnCount: 3,
+                pendingRoundAdvance: true,
+                mustDiscardBySeat: { A: 0, B: 0 },
+                seats: {
+                  A: {
+                    tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+                    connected: true,
+                    handSize: 4,
+                    projectsStartedThisRound: 2,
                   },
-                  decks: {
-                    projects: { drawPile: ['project-p1'], discardPile: [] },
-                    macroEvents: { drawPile: ['macro-m6'], discardPile: [] },
+                  B: {
+                    tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+                    connected: true,
+                    handSize: 2,
+                    projectsStartedThisRound: 0,
                   },
-                  log: [],
-                }),
-              },
+                },
+                decks: {
+                  projects: { drawPile: ['project-p1'], discardPile: [] },
+                  macroEvents: { drawPile: ['macro-m6'], discardPile: [] },
+                },
+                log: [],
+              }),
             },
           },
-          { status: 200, headers: { ETag: 'etag-7' } },
-        ),
-      )
-      .mockResolvedValueOnce(jsonResponse({}, { status: 200, headers: { ETag: 'etag-6' } }));
+        },
+        { status: 200, headers: { ETag: 'etag-7' } },
+      ),
+    )
+    .mockResolvedValueOnce(jsonResponse({}, { status: 200, headers: { ETag: 'etag-6' } }));
 
-    const endTurnReq = {
-      method: 'POST',
-      query: { id: 'room-1' },
-      body: {
-        seat: 'A',
-        token: 'abc',
-        expectedVersion: 20,
-        action: { type: 'END_TURN' },
-      },
-    };
-    const endTurnRes = createRes();
+  const endTurnReq = {
+    method: 'POST',
+    query: { id: 'room-1' },
+    body: {
+      seat: 'A',
+      token: 'abc',
+      expectedVersion: 20,
+      expectedTurnNonce: 'tn-1',
+      action: { type: 'END_TURN' },
+    },
+  };
+  const endTurnRes = createRes();
 
-    await handler(endTurnReq, endTurnRes);
+  await handler(endTurnReq, endTurnRes);
 
-    expect(endTurnRes.statusCode).toBe(200);
-    expect((endTurnRes.body as any).room.pendingRoundAdvance).toBe(true);
-    expect((endTurnRes.body as any).room.mustDiscardBySeat).toEqual({ A: 0, B: 1 });
+  expect(endTurnRes.statusCode).toBe(200);
+  expect((endTurnRes.body as any).room.pendingRoundAdvance).toBe(true);
+  expect((endTurnRes.body as any).room.mustDiscardBySeat).toEqual({ A: 0, B: 1 });
 
-    const blockedAdvanceReq = {
-      method: 'POST',
-      query: { id: 'room-1' },
-      body: {
-        seat: 'A',
-        token: 'abc',
-        expectedVersion: 21,
-        action: { type: 'ADVANCE_ROUND' },
-      },
-    };
-    const blockedAdvanceRes = createRes();
+  const blockedAdvanceReq = {
+    method: 'POST',
+    query: { id: 'room-1' },
+    body: {
+      seat: 'A',
+      token: 'abc',
+      expectedVersion: 21,
+      expectedTurnNonce: 'tn-1',
+      action: { type: 'ADVANCE_ROUND' },
+    },
+  };
+  const blockedAdvanceRes = createRes();
 
-    await handler(blockedAdvanceReq, blockedAdvanceRes);
+  await handler(blockedAdvanceReq, blockedAdvanceRes);
 
-    expect(blockedAdvanceRes.statusCode).toBe(409);
-    expect((blockedAdvanceRes.body as any).error).toContain('Round-end discards are pending');
+  expect(blockedAdvanceRes.statusCode).toBe(409);
+  expect((blockedAdvanceRes.body as any).error).toContain('Round-end discards are pending');
 
-    const discardReq = {
-      method: 'POST',
-      query: { id: 'room-1' },
-      body: {
-        seat: 'B',
-        token: 'abc',
-        expectedVersion: 21,
-        action: { type: 'DISCARD_ASSET', cardId: 'asset-a1' },
-      },
-    };
-    const discardRes = createRes();
+  const discardReq = {
+    method: 'POST',
+    query: { id: 'room-1' },
+    body: {
+      seat: 'B',
+      token: 'abc',
+      expectedVersion: 21,
+      expectedTurnNonce: 'tn-1',
+      action: { type: 'DISCARD_ASSET', cardId: 'asset-a1' },
+    },
+  };
+  const discardRes = createRes();
 
-    await handler(discardReq, discardRes);
+  await handler(discardReq, discardRes);
 
-    expect(discardRes.statusCode).toBe(200);
-    expect((discardRes.body as any).room.mustDiscardBySeat).toEqual({ A: 0, B: 0 });
+  expect(discardRes.statusCode).toBe(200);
+  expect((discardRes.body as any).room.mustDiscardBySeat).toEqual({ A: 0, B: 0 });
 
-    const advanceReq = {
-      method: 'POST',
-      query: { id: 'room-1' },
-      body: {
-        seat: 'A',
-        token: 'abc',
-        expectedVersion: 22,
-        action: { type: 'ADVANCE_ROUND' },
-      },
-    };
-    const advanceRes = createRes();
+  const advanceReq = {
+    method: 'POST',
+    query: { id: 'room-1' },
+    body: {
+      seat: 'A',
+      token: 'abc',
+      expectedVersion: 22,
+      expectedTurnNonce: 'tn-1',
+      action: { type: 'ADVANCE_ROUND' },
+    },
+  };
+  const advanceRes = createRes();
 
-    await handler(advanceReq, advanceRes);
+  await handler(advanceReq, advanceRes);
 
-    expect(advanceRes.statusCode).toBe(200);
-    expect((advanceRes.body as any).room.currentRound).toBe(2);
-    expect((advanceRes.body as any).room.pendingRoundAdvance).toBe(false);
-  });
-
+  expect(advanceRes.statusCode).toBe(200);
+  expect((advanceRes.body as any).room.currentRound).toBe(2);
+  expect((advanceRes.body as any).room.pendingRoundAdvance).toBe(false);
+});
