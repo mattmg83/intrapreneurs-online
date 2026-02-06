@@ -1,14 +1,18 @@
 import { githubRequest, hashToken, randomSeatToken } from '../_lib/github.js';
+import { buildInitialDeckState } from '../_lib/roomSetup.js';
 
 const SEAT_ORDER = ['A', 'B', 'C', 'D'];
 
 function buildInitialPublicState(playerCount, seatTokenHashes) {
   const seats = {};
+  const playerSeats = SEAT_ORDER.slice(0, playerCount);
 
-  for (const seat of SEAT_ORDER.slice(0, playerCount)) {
+  for (const seat of playerSeats) {
     seats[seat] = {
       connected: false,
-      handSize: 0,
+      handSize: 2,
+      mustDiscard: false,
+      discardTarget: null,
       tokenHash: seatTokenHashes[seat],
       publicFlags: {
         hasDefense: false,
@@ -16,6 +20,8 @@ function buildInitialPublicState(playerCount, seatTokenHashes) {
       },
     };
   }
+
+  const { decks, market, dealQueue } = buildInitialDeckState(playerSeats);
 
   return {
     schemaVersion: 1,
@@ -26,10 +32,11 @@ function buildInitialPublicState(playerCount, seatTokenHashes) {
     totalRounds: 3,
     currentSeat: 'A',
     seats,
-    availableProjects: [],
-    availableAssets: [],
+    market,
     roundModifiers: [],
     discardPileCount: 0,
+    decks,
+    dealQueue,
     notes: ['TODO: load real deck data and reducer transitions.'],
   };
 }
@@ -120,6 +127,7 @@ export default async function handler(req, res) {
     return res.status(201).json({
       roomId,
       invites,
+      privateDelta: null,
     });
   } catch (error) {
     return res.status(500).json({

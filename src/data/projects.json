@@ -1,0 +1,12 @@
+[
+  { "id": "project-p1", "name": "Self-Serve Portal", "family": "Customer", "mvReq": 2, "tfReq": 1, "rewards": { "growth": 3, "fuel": 1 } },
+  { "id": "project-p2", "name": "Smart Routing", "family": "Operations", "mvReq": 3, "tfReq": 2, "rewards": { "growth": 4, "fuel": 1 }, "acceleration": 1 },
+  { "id": "project-p3", "name": "Usage Analytics", "family": "Data", "mvReq": 2, "tfReq": 3, "rewards": { "growth": 2, "fuel": 2 } },
+  { "id": "project-p4", "name": "Partner API", "family": "Platform", "mvReq": 4, "tfReq": 2, "rewards": { "growth": 5, "fuel": 0 } },
+  { "id": "project-p5", "name": "Retention Engine", "family": "Customer", "mvReq": 3, "tfReq": 3, "rewards": { "growth": 4, "fuel": 2 } },
+  { "id": "project-p6", "name": "Mobile Workflow", "family": "Product", "mvReq": 2, "tfReq": 2, "rewards": { "growth": 3, "fuel": 1 } },
+  { "id": "project-p7", "name": "Risk Monitor", "family": "Compliance", "mvReq": 3, "tfReq": 4, "rewards": { "growth": 2, "fuel": 3 }, "acceleration": 2 },
+  { "id": "project-p8", "name": "Coach Copilot", "family": "AI", "mvReq": 4, "tfReq": 3, "rewards": { "growth": 5, "fuel": 2 } },
+  { "id": "project-p9", "name": "Pricing Simulator", "family": "Finance", "mvReq": 2, "tfReq": 2, "rewards": { "growth": 2, "fuel": 2 } },
+  { "id": "project-p10", "name": "Service Reboot", "family": "Operations", "mvReq": 1, "tfReq": 1, "rewards": { "growth": 1, "fuel": 2 } }
+]

@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest';
+import { initializeDecks } from '../src/gameCore/decks';
 import { reduce, type GameState } from '../src/gameCore/reducer';
 
-const buildState = (seats: string[]): GameState => {
+const buildState = (seats: string[], rngSeed = 'seed-123'): GameState => {
   const seatMap = Object.fromEntries(seats.map((seat) => [seat, { occupied: true }]));
 
   return {
     currentSeat: seats[0],
     version: 1,
     seats: seatMap,
+    public: {
+      rngSeed,
+    },
+    decks: initializeDecks(rngSeed),
   };
 };
 
@@ -45,6 +50,37 @@ describe('seat rotation', () => {
       'C',
       'D',
       'A',
+    ]);
+  });
+});
+
+describe('decks', () => {
+  it('initializes deck order deterministically from rngSeed', () => {
+    const stateA = buildState(['A', 'B'], 'same-seed');
+    const stateB = buildState(['A', 'B'], 'same-seed');
+    const stateC = buildState(['A', 'B'], 'other-seed');
+
+    const initializedA = reduce(stateA, { type: 'INITIALIZE_DECKS' }, { actingSeat: 'A' });
+    const initializedB = reduce(stateB, { type: 'INITIALIZE_DECKS' }, { actingSeat: 'A' });
+    const initializedC = reduce(stateC, { type: 'INITIALIZE_DECKS' }, { actingSeat: 'A' });
+
+    expect(initializedA.decks).toEqual(initializedB.decks);
+    expect(initializedA.decks.assetsRound1.drawPile).not.toEqual(
+      initializedC.decks.assetsRound1.drawPile,
+    );
+  });
+
+  it('draws cards deterministically from shuffled deck', () => {
+    const initial = reduce(buildState(['A', 'B'], 'draw-seed'), { type: 'INITIALIZE_DECKS' }, { actingSeat: 'A' });
+
+    const firstDraw = reduce(initial, { type: 'DRAW_CARD', deck: 'projects' }, { actingSeat: 'A' });
+    const secondDraw = reduce(firstDraw, { type: 'DRAW_CARD', deck: 'projects' }, { actingSeat: 'A' });
+
+    expect(firstDraw.lastDrawnCardId).toBe(initial.decks.projects.drawPile[0]);
+    expect(secondDraw.lastDrawnCardId).toBe(initial.decks.projects.drawPile[1]);
+    expect(secondDraw.decks.projects.discardPile).toEqual([
+      initial.decks.projects.drawPile[0],
+      initial.decks.projects.drawPile[1],
     ]);
   });
 });

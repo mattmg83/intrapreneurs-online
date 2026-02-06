@@ -1,0 +1,14 @@
+[
+  { "id": "asset-a1", "name": "Automation Studio", "family": "Operations", "outcomes": { "budget": -2, "headcount": 0, "tailwind": 2 } },
+  { "id": "asset-a2", "name": "Research Sprint", "family": "Discovery", "outcomes": { "budget": -1, "headcount": -1, "tailwind": 2 } },
+  { "id": "asset-a3", "name": "Partner Credits", "family": "Finance", "outcomes": { "budget": 2, "headcount": 0, "tailwind": 0 } },
+  { "id": "asset-a4", "name": "Field Mentors", "family": "People", "outcomes": { "budget": -1, "headcount": 1, "tailwind": 1 } },
+  { "id": "asset-a5", "name": "Design Tokens", "family": "Product", "outcomes": { "budget": 0, "headcount": 0, "tailwind": 2 } },
+  { "id": "asset-a6", "name": "Vendor Marketplace", "family": "Procurement", "outcomes": { "budget": 1, "headcount": 0, "tailwind": 1 } },
+  { "id": "asset-a7", "name": "Cross-Train Program", "family": "People", "outcomes": { "budget": -1, "headcount": 2, "tailwind": 0 } },
+  { "id": "asset-a8", "name": "Data Sandbox", "family": "Technology", "outcomes": { "budget": -2, "headcount": 1, "tailwind": 2 }, "pickCondition": "requires-data-governance" },
+  { "id": "asset-a9", "name": "Pilot Budget", "family": "Finance", "outcomes": { "budget": 3, "headcount": 0, "tailwind": -1 } },
+  { "id": "asset-a10", "name": "Customer Council", "family": "Discovery", "outcomes": { "budget": -1, "headcount": 0, "tailwind": 3 } },
+  { "id": "asset-a11", "name": "Legal Fastlane", "family": "Compliance", "outcomes": { "budget": -1, "headcount": 0, "tailwind": 2 }, "pickCondition": "if-regulatory-risk" },
+  { "id": "asset-a12", "name": "Innovation Fellows", "family": "People", "outcomes": { "budget": -2, "headcount": 2, "tailwind": 1 } }
+]

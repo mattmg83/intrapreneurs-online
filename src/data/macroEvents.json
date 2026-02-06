@@ -1,0 +1,8 @@
+[
+  { "id": "macro-m1", "name": "Rate Cut", "ruleModifiers": { "projectFuelBonus": 1 } },
+  { "id": "macro-m2", "name": "Election Cycle", "ruleModifiers": { "obstacleFrequency": 1 } },
+  { "id": "macro-m3", "name": "Cloud Price Drop", "ruleModifiers": { "assetBudgetBonus": 1 } },
+  { "id": "macro-m4", "name": "Regulatory Wave", "ruleModifiers": { "complianceReqDelta": 1 } },
+  { "id": "macro-m5", "name": "Talent Exodus", "ruleModifiers": { "headcountPenalty": 1 } },
+  { "id": "macro-m6", "name": "AI Breakthrough", "ruleModifiers": { "tailwindBonus": 2 } }
+]

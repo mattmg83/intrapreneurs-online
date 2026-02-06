@@ -1,4 +1,5 @@
 import { githubRequest } from '../_lib/github.js';
+import { toPublicRoomState } from '../_lib/publicRoomState.js';
 
 function normalizeEtag(value) {
   if (!value) {
@@ -53,7 +54,7 @@ export default async function handler(req, res) {
 
     const room = JSON.parse(roomFile.content);
 
-    return res.status(200).json(room);
+    return res.status(200).json(toPublicRoomState(room));
   } catch (error) {
     return res.status(500).json({
       error: error instanceof Error ? error.message : 'Unexpected error.',
