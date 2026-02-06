@@ -62,6 +62,11 @@ Open the URL printed by Vercel (typically `http://localhost:3000`).
 - **Private hand cards are client-local**: card identities are tracked in browser `localStorage` and updated through `privateDelta` responses.
 - This means gameplay is optimized for low-friction play, not cryptographic secrecy.
 
+
+### SPA deep-link routing on Vercel
+
+A root `vercel.json` routes `/api/*` to serverless functions, then falls back all other non-file paths (for example `/play` and `/rules`) to `index.html`. This prevents Vercel `404: NOT_FOUND` responses on direct URL visits and lets React Router handle client-side routes.
+
 ## Troubleshooting
 
 ### 401 / 403 from API routes
