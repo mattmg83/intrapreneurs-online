@@ -1,0 +1,8 @@
+[
+  { "id": "obstacle-o1", "name": "Approval Queue", "impact": { "budget": -1, "tailwind": -1 }, "defenseKey": "legal-fastlane" },
+  { "id": "obstacle-o2", "name": "Hiring Freeze", "impact": { "headcount": -2, "tailwind": 0 } },
+  { "id": "obstacle-o3", "name": "Security Audit", "impact": { "budget": -2, "tailwind": -1 }, "defenseKey": "risk-monitor" },
+  { "id": "obstacle-o4", "name": "Legacy Downtime", "impact": { "budget": -1, "tailwind": -2 } },
+  { "id": "obstacle-o5", "name": "Scope Creep", "impact": { "budget": -1, "headcount": -1, "tailwind": -1 } },
+  { "id": "obstacle-o6", "name": "Vendor Outage", "impact": { "tailwind": -2 }, "defenseKey": "vendor-marketplace" }
+]

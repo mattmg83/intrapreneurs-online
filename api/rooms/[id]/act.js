@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { githubRequest, hashToken } from '../../_lib/github.js';
 import { reduceRoomState } from '../../_lib/roomReducer.js';
+import { toPublicRoomState } from '../../_lib/publicRoomState.js';
 
 function extractRoomFromGist(gist) {
   const roomFile = gist?.files?.['room.json'];
@@ -8,24 +10,6 @@ function extractRoomFromGist(gist) {
   }
 
   return JSON.parse(roomFile.content);
-}
-
-function toPublicRoomState(room) {
-  if (!room?.seats || typeof room.seats !== 'object') {
-    return room;
-  }
-
-  const publicSeats = Object.fromEntries(
-    Object.entries(room.seats).map(([seat, seatState]) => {
-      const { token, tokenHash, ...restSeatState } = seatState ?? {};
-      return [seat, restSeatState];
-    }),
-  );
-
-  return {
-    ...room,
-    seats: publicSeats,
-  };
 }
 
 function isSeatTokenValid(seatState, token) {
@@ -52,6 +36,158 @@ async function loadLatestRoom(roomId) {
 
   const latestGist = await latestResponse.json();
   return extractRoomFromGist(latestGist);
+}
+
+const assetsRound1Cards = JSON.parse(
+  readFileSync(new URL('../../../src/data/assetsRound1.json', import.meta.url), 'utf8'),
+);
+const assetLookup = Object.fromEntries(assetsRound1Cards.map((card) => [card.id, card]));
+
+const isAssetEligible = (assetCard) => !assetCard?.pickCondition;
+
+const drawTop = (deckState) => {
+  if (!Array.isArray(deckState?.drawPile) || deckState.drawPile.length === 0) {
+    return {
+      cardId: null,
+      nextDeck: deckState,
+    };
+  }
+
+  const [cardId, ...rest] = deckState.drawPile;
+
+  return {
+    cardId,
+    nextDeck: {
+      ...deckState,
+      drawPile: rest,
+      discardPile: [...(deckState.discardPile ?? []), cardId],
+    },
+  };
+};
+
+function applyPickAsset(room, seat, action) {
+  const market = room.market ?? {};
+  const availableAssets = Array.isArray(market.availableAssets) ? market.availableAssets : [];
+  const eligibleMarketAssets = availableAssets.filter((assetId) =>
+    isAssetEligible(assetLookup[assetId]),
+  );
+
+  const selectedMarketCardId =
+    typeof action.cardId === 'string' && eligibleMarketAssets.includes(action.cardId)
+      ? action.cardId
+      : eligibleMarketAssets[0] ?? null;
+
+  let pickedCardId = selectedMarketCardId;
+  let nextAvailableAssets = availableAssets;
+  let nextAssetsDeck = room?.decks?.assetsRound1 ?? { drawPile: [], discardPile: [] };
+
+  if (pickedCardId) {
+    nextAvailableAssets = availableAssets.filter((cardId) => cardId !== pickedCardId);
+  } else {
+    const drawResult = drawTop(nextAssetsDeck);
+    pickedCardId = drawResult.cardId;
+    nextAssetsDeck = drawResult.nextDeck;
+  }
+
+  while (nextAvailableAssets.length < 3) {
+    const refillResult = drawTop(nextAssetsDeck);
+    if (!refillResult.cardId) {
+      break;
+    }
+
+    nextAvailableAssets = [...nextAvailableAssets, refillResult.cardId];
+    nextAssetsDeck = refillResult.nextDeck;
+  }
+
+  if (!pickedCardId) {
+    throw new Error('No asset cards available to pick or draw.');
+  }
+
+  const currentHandSize = Number(room?.seats?.[seat]?.handSize ?? 0);
+  const nextHandSize = currentHandSize + 1;
+  const mustDiscard = nextHandSize > 7;
+
+  const updatedRoom = {
+    ...room,
+    seats: {
+      ...(room.seats ?? {}),
+      [seat]: {
+        ...(room.seats?.[seat] ?? {}),
+        handSize: nextHandSize,
+        mustDiscard,
+        discardTarget: mustDiscard ? 7 : null,
+      },
+    },
+    market: {
+      ...market,
+      availableAssets: nextAvailableAssets,
+    },
+    decks: {
+      ...(room.decks ?? {}),
+      assetsRound1: nextAssetsDeck,
+    },
+  };
+
+  return {
+    room: updatedRoom,
+    privateDelta: {
+      seat,
+      addedCardIds: [pickedCardId],
+      removedCardIds: [],
+    },
+  };
+}
+
+function applyRoomAction(room, seat, action) {
+  switch (action.type) {
+    case 'END_TURN':
+      return {
+        room: reduceRoomState(room, action),
+        privateDelta: null,
+      };
+    case 'PICK_ASSET':
+      return applyPickAsset(room, seat, action);
+    case 'DISCARD_ASSET': {
+      const seatState = room?.seats?.[seat] ?? {};
+      const currentHandSize = Number(seatState.handSize ?? 0);
+
+      if (currentHandSize <= 0) {
+        throw new Error('No cards available to discard.');
+      }
+
+      if (typeof action.cardId !== 'string' || action.cardId.length === 0) {
+        throw new Error('Missing discard card id.');
+      }
+
+      const nextHandSize = currentHandSize - 1;
+      const discardTarget = Number.isInteger(seatState.discardTarget)
+        ? Number(seatState.discardTarget)
+        : 7;
+      const mustDiscard = nextHandSize > discardTarget;
+
+      return {
+        room: {
+          ...room,
+          seats: {
+            ...(room.seats ?? {}),
+            [seat]: {
+              ...seatState,
+              handSize: nextHandSize,
+              mustDiscard,
+              discardTarget: mustDiscard ? discardTarget : null,
+            },
+          },
+        },
+        privateDelta: {
+          seat,
+          addedCardIds: [],
+          removedCardIds: [action.cardId],
+        },
+      };
+    }
+    default:
+      throw new Error(`Unsupported action type: ${action.type}`);
+  }
 }
 
 export default async function handler(req, res) {
@@ -82,7 +218,11 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing action.' });
   }
 
-  if (action.type !== 'END_TURN') {
+  if (
+    action.type !== 'END_TURN' &&
+    action.type !== 'PICK_ASSET' &&
+    action.type !== 'DISCARD_ASSET'
+  ) {
     return res.status(400).json({ error: 'Unsupported action type.' });
   }
 
@@ -122,16 +262,30 @@ export default async function handler(req, res) {
       });
     }
 
-    if (room.currentSeat !== seat) {
+    const isPlayersTurn = room.currentSeat === seat;
+    const discardRequired = Boolean(seatInfo?.mustDiscard);
+
+    if (!isPlayersTurn) {
+      const canDiscardOutOfTurn = action.type === 'DISCARD_ASSET' && discardRequired;
+
+      if (!canDiscardOutOfTurn) {
+        return res.status(409).json({
+          error: `Not ${seat}'s turn.`,
+          latestState: toPublicRoomState(room),
+        });
+      }
+    }
+
+    if (action.type === 'END_TURN' && discardRequired) {
       return res.status(409).json({
-        error: `Not ${seat}'s turn.`,
+        error: 'Must discard down to limit before ending turn.',
         latestState: toPublicRoomState(room),
       });
     }
 
-    const reducedRoom = reduceRoomState(room, action);
+    const transition = applyRoomAction(room, seat, action);
     const updatedRoom = {
-      ...reducedRoom,
+      ...transition.room,
       version: Number(room.version ?? 0) + 1,
       log: [
         ...(Array.isArray(room.log) ? room.log : []),
@@ -187,6 +341,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       room: toPublicRoomState(updatedRoom),
+      privateDelta: transition.privateDelta,
       nextEtag: nextEtag ?? null,
     });
   } catch (error) {

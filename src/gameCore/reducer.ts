@@ -1,4 +1,5 @@
 import type { Action } from './actions';
+import { drawFromDeck, initializeDecks, type DeckState } from './decks';
 import { assertItIsPlayersTurn, nextSeatRotation } from './rules';
 
 export type SeatState = {
@@ -9,6 +10,11 @@ export type GameState = {
   currentSeat: string;
   version: number;
   seats: Record<string, SeatState>;
+  public: {
+    rngSeed: string;
+  };
+  decks: DeckState;
+  lastDrawnCardId?: string;
 };
 
 export type ReduceMeta = {
@@ -27,10 +33,25 @@ export const reduce = (
   action: Action,
   meta: ReduceMeta,
 ): GameState => {
-  assertItIsPlayersTurn(state.currentSeat, meta.actingSeat);
-
   switch (action.type) {
+    case 'INITIALIZE_DECKS': {
+      return {
+        ...state,
+        decks: initializeDecks(state.public.rngSeed),
+      };
+    }
+    case 'DRAW_CARD': {
+      const { cardId, decks } = drawFromDeck(state.decks, action.deck);
+
+      return {
+        ...state,
+        decks,
+        version: state.version + 1,
+        lastDrawnCardId: cardId,
+      };
+    }
     case 'END_TURN': {
+      assertItIsPlayersTurn(state.currentSeat, meta.actingSeat);
       const occupiedSeats = getOccupiedSeatOrder(state.seats);
       const currentSeat = nextSeatRotation(occupiedSeats, state.currentSeat);
 
@@ -40,5 +61,7 @@ export const reduce = (
         version: state.version + 1,
       };
     }
+    default:
+      throw new Error(`Unsupported action type: ${(action as Action).type}`);
   }
 };
