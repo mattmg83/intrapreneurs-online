@@ -4,7 +4,7 @@ Vite + React + TypeScript scaffold for an online playable adaptation of **Intrap
 
 ## Scripts
 
-- `npm run dev` - start Vite local dev server for frontend-only iteration
+- `npm run dev` - start local dev server
 - `npm run build` - type-check and production build
 - `npm run preview` - preview production build
 - `npm run lint` - run ESLint
