@@ -1,4 +1,4 @@
-import { githubRequest, hashToken, randomSeatToken } from '../_lib/github.js';
+import { githubRequest, hashToken, randomSeatToken, randomTurnNonce } from '../_lib/github.js';
 import { buildInitialDeckState } from '../_lib/roomSetup.js';
 
 const SEAT_ORDER = ['A', 'B', 'C', 'D'];
@@ -34,6 +34,7 @@ function buildInitialPublicState(playerCount, seatTokenHashes) {
     currentRound: 1,
     totalRounds: 3,
     currentSeat: 'A',
+    turnNonce: randomTurnNonce(),
     seats,
     market,
     turnCount: 0,

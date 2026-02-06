@@ -38,6 +38,7 @@ type RoomState = {
   totalRounds?: number;
   phase?: string;
   version?: number;
+  turnNonce?: string;
   gameOver?: boolean;
   finalScoring?: {
     bySeat?: Record<string, SeatScoreBreakdown>;
@@ -84,6 +85,7 @@ export function GamePage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const etagRef = useRef<string | null>(null);
+  const toastTimeoutRef = useRef<number | null>(null);
 
   const session = useMemo(
     () => ({
@@ -131,6 +133,18 @@ export function GamePage() {
     [handStorageKey, session.seat],
   );
 
+  const showToast = useCallback((message: string) => {
+    if (toastTimeoutRef.current !== null) {
+      window.clearTimeout(toastTimeoutRef.current);
+    }
+
+    setToastMessage(message);
+    toastTimeoutRef.current = window.setTimeout(() => {
+      setToastMessage((currentMessage) => (currentMessage === message ? null : currentMessage));
+      toastTimeoutRef.current = null;
+    }, 3500);
+  }, []);
+
   const fetchRoom = useCallback(async () => {
     if (!session.room) {
       setError('Missing room id.');
@@ -147,6 +161,7 @@ export function GamePage() {
       const response = await fetch(`/api/rooms/${encodeURIComponent(session.room)}`, {
         method: 'GET',
         headers,
+        cache: 'no-cache',
       });
 
       if (response.status === 304) {
@@ -170,11 +185,13 @@ export function GamePage() {
       setRoomState(payload ?? null);
       setError(null);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Failed to load room state.');
+      const message = loadError instanceof Error ? loadError.message : 'Failed to load room state.';
+      setError(message);
+      showToast(message);
     } finally {
       setLoading(false);
     }
-  }, [session.room]);
+  }, [session.room, showToast]);
 
   const joinRoom = useCallback(async () => {
     if (!session.room || !session.seat || !session.token) {
@@ -199,7 +216,9 @@ export function GamePage() {
     };
 
     if (!response.ok) {
-      throw new Error(payload.error ?? 'Failed to join room.');
+      const message = payload.error ?? 'Failed to join room.';
+      showToast(message);
+      throw new Error(message);
     }
 
     const etag = response.headers.get('etag');
@@ -209,7 +228,7 @@ export function GamePage() {
 
     setRoomState(payload.room ?? null);
     applyPrivateDelta(payload.privateDelta);
-  }, [applyPrivateDelta, session.room, session.seat, session.token]);
+  }, [applyPrivateDelta, session.room, session.seat, session.token, showToast]);
 
   useEffect(() => {
     setLoading(true);
@@ -260,11 +279,29 @@ export function GamePage() {
     return () => {
       stopPolling();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (toastTimeoutRef.current !== null) {
+        window.clearTimeout(toastTimeoutRef.current);
+      }
     };
   }, [fetchRoom, joinRoom]);
 
+  useEffect(() => {
+    const isMyTurn = roomState?.currentSeat === session.seat;
+    document.title = isMyTurn ? 'Your turn!' : 'Intrapreneurs Online';
+
+    return () => {
+      document.title = 'Intrapreneurs Online';
+    };
+  }, [roomState?.currentSeat, session.seat]);
+
   const handleEndTurn = async () => {
-    if (!session.room || !session.seat || !session.token || roomState?.version == null) {
+    if (
+      !session.room ||
+      !session.seat ||
+      !session.token ||
+      roomState?.version == null ||
+      !roomState.turnNonce
+    ) {
       return;
     }
 
@@ -281,6 +318,7 @@ export function GamePage() {
           seat: session.seat,
           token: session.token,
           expectedVersion: roomState.version,
+          expectedTurnNonce: roomState.turnNonce,
           action: {
             type: 'END_TURN',
           },
@@ -297,12 +335,7 @@ export function GamePage() {
       if (!response.ok) {
         if (response.status === 409 && payload.latestState) {
           setRoomState(payload.latestState);
-          setToastMessage('State updated, try again.');
-          window.setTimeout(() => {
-            setToastMessage((currentMessage) =>
-              currentMessage === 'State updated, try again.' ? null : currentMessage,
-            );
-          }, 3000);
+          showToast('State updated, try again.');
           return;
         }
 
@@ -318,14 +351,22 @@ export function GamePage() {
       applyPrivateDelta(payload.privateDelta);
       setToastMessage(null);
     } catch (submitError) {
-      setActionError(submitError instanceof Error ? submitError.message : 'Failed to end turn.');
+      const message = submitError instanceof Error ? submitError.message : 'Failed to end turn.';
+      setActionError(message);
+      showToast(message);
     } finally {
       setIsEndingTurn(false);
     }
   };
 
   const handlePickAsset = async (cardId?: string) => {
-    if (!session.room || !session.seat || !session.token || roomState?.version == null) {
+    if (
+      !session.room ||
+      !session.seat ||
+      !session.token ||
+      roomState?.version == null ||
+      !roomState.turnNonce
+    ) {
       return;
     }
 
@@ -341,6 +382,7 @@ export function GamePage() {
           seat: session.seat,
           token: session.token,
           expectedVersion: roomState.version,
+          expectedTurnNonce: roomState.turnNonce,
           action: {
             type: 'PICK_ASSET',
             ...(cardId ? { cardId } : {}),
@@ -358,6 +400,7 @@ export function GamePage() {
       if (!response.ok) {
         if (response.status === 409 && payload.latestState) {
           setRoomState(payload.latestState);
+          showToast('State updated, try your action again.');
           return;
         }
 
@@ -372,13 +415,20 @@ export function GamePage() {
       setRoomState(payload.room ?? null);
       applyPrivateDelta(payload.privateDelta);
     } catch (submitError) {
-      setActionError(submitError instanceof Error ? submitError.message : 'Failed to pick asset.');
+      const message = submitError instanceof Error ? submitError.message : 'Failed to pick asset.';
+      setActionError(message);
+      showToast(message);
     }
   };
 
-
   const handleDiscardAsset = async (cardId: string) => {
-    if (!session.room || !session.seat || !session.token || roomState?.version == null) {
+    if (
+      !session.room ||
+      !session.seat ||
+      !session.token ||
+      roomState?.version == null ||
+      !roomState.turnNonce
+    ) {
       return;
     }
 
@@ -394,6 +444,7 @@ export function GamePage() {
           seat: session.seat,
           token: session.token,
           expectedVersion: roomState.version,
+          expectedTurnNonce: roomState.turnNonce,
           action: {
             type: 'DISCARD_ASSET',
             cardId,
@@ -411,6 +462,7 @@ export function GamePage() {
       if (!response.ok) {
         if (response.status === 409 && payload.latestState) {
           setRoomState(payload.latestState);
+          showToast('State updated, try your action again.');
           return;
         }
 
@@ -425,11 +477,38 @@ export function GamePage() {
       setRoomState(payload.room ?? null);
       applyPrivateDelta(payload.privateDelta);
     } catch (submitError) {
-      setActionError(
-        submitError instanceof Error ? submitError.message : 'Failed to discard asset.',
-      );
+      const message =
+        submitError instanceof Error ? submitError.message : 'Failed to discard asset.';
+      setActionError(message);
+      showToast(message);
     }
   };
+
+  const roomLink = useMemo(() => {
+    const params = new URLSearchParams({ room: session.room });
+    return `${window.location.origin}/game?${params.toString()}`;
+  }, [session.room]);
+
+  const seatLink = useMemo(() => {
+    const params = new URLSearchParams({
+      room: session.room,
+      seat: session.seat,
+      token: session.token,
+    });
+    return `${window.location.origin}/game?${params.toString()}`;
+  }, [session.room, session.seat, session.token]);
+
+  const copyLink = useCallback(
+    async (value: string, label: string) => {
+      try {
+        await navigator.clipboard.writeText(value);
+        showToast(`${label} copied.`);
+      } catch {
+        showToast(`Could not copy ${label.toLowerCase()}.`);
+      }
+    },
+    [showToast],
+  );
 
   const turnBanner = useMemo(() => {
     if (!roomState?.currentSeat) {
@@ -458,9 +537,12 @@ export function GamePage() {
     !isEndingTurn &&
     roomState?.version != null &&
     !mustDiscard;
-  const canPickAsset = !isGameOver && roomState?.currentSeat === session.seat && roomState?.version != null;
+  const canPickAsset =
+    !isGameOver && roomState?.currentSeat === session.seat && roomState?.version != null;
   const canDiscardAsset =
-    !isGameOver && roomState?.version != null && (roomState?.currentSeat === session.seat || mustDiscard);
+    !isGameOver &&
+    roomState?.version != null &&
+    (roomState?.currentSeat === session.seat || mustDiscard);
 
   return (
     <PageShell title="Game" subtitle="Room session details loaded from query parameters.">
@@ -533,6 +615,22 @@ export function GamePage() {
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => copyLink(roomLink, 'Room link')}
+            disabled={!session.room}
+            className="inline-flex items-center rounded-lg border border-slate-500 bg-slate-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Copy room link
+          </button>
+          <button
+            type="button"
+            onClick={() => copyLink(seatLink, 'Seat link')}
+            disabled={!session.room || !session.seat || !session.token}
+            className="inline-flex items-center rounded-lg border border-slate-500 bg-slate-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Copy seat link
+          </button>
           {marketAssets.map((assetId) => (
             <button
               key={assetId}
@@ -580,8 +678,6 @@ export function GamePage() {
             {actionError}
           </p>
         ) : null}
-
-
 
         {isGameOver ? (
           <section className="mt-6 rounded-md border border-emerald-700 bg-emerald-900/20 p-4">

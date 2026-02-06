@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { githubRequest, hashToken } from '../../_lib/github.js';
+import { githubRequest, hashToken, randomTurnNonce } from '../../_lib/github.js';
 import { reduceRoomState } from '../../_lib/roomReducer.js';
 import { toPublicRoomState } from '../../_lib/publicRoomState.js';
 
@@ -492,6 +492,7 @@ export default async function handler(req, res) {
   const seat = req.body?.seat;
   const token = req.body?.token;
   const expectedVersion = Number(req.body?.expectedVersion);
+  const expectedTurnNonce = req.body?.expectedTurnNonce;
   const action = req.body?.action;
 
   if (!seat || typeof seat !== 'string' || !token || typeof token !== 'string') {
@@ -500,6 +501,10 @@ export default async function handler(req, res) {
 
   if (!Number.isInteger(expectedVersion)) {
     return res.status(400).json({ error: 'Missing or invalid expectedVersion.' });
+  }
+
+  if (!expectedTurnNonce || typeof expectedTurnNonce !== 'string') {
+    return res.status(400).json({ error: 'Missing or invalid expectedTurnNonce.' });
   }
 
   if (!action || typeof action !== 'object') {
@@ -554,6 +559,18 @@ export default async function handler(req, res) {
       });
     }
 
+    const currentTurnNonce =
+      typeof room.turnNonce === 'string' && room.turnNonce.length > 0
+        ? room.turnNonce
+        : 'legacy-turn';
+
+    if (currentTurnNonce !== expectedTurnNonce) {
+      return res.status(409).json({
+        error: 'Turn nonce mismatch.',
+        latestState: toPublicRoomState(room),
+      });
+    }
+
     const isPlayersTurn = room.currentSeat === seat;
     const discardRequired = Boolean(seatInfo?.mustDiscard);
     const roundDiscardDebt = getRoundDiscardDebt(room, seat);
@@ -568,7 +585,8 @@ export default async function handler(req, res) {
     }
 
     if (!isPlayersTurn) {
-      const canDiscardOutOfTurn = action.type === 'DISCARD_ASSET' && (discardRequired || hasRoundDiscardDebt);
+      const canDiscardOutOfTurn =
+        action.type === 'DISCARD_ASSET' && (discardRequired || hasRoundDiscardDebt);
 
       if (!canDiscardOutOfTurn) {
         return res.status(409).json({
@@ -593,8 +611,13 @@ export default async function handler(req, res) {
     }
 
     const transition = applyRoomAction(room, seat, action);
+    const previousSeat = room.currentSeat;
+    const nextSeat = transition.room?.currentSeat;
+    const nextTurnNonce = previousSeat !== nextSeat ? randomTurnNonce() : currentTurnNonce;
+
     const updatedRoom = {
       ...transition.room,
+      turnNonce: nextTurnNonce,
       version: Number(room.version ?? 0) + 1,
       log: [
         ...(Array.isArray(room.log) ? room.log : []),
