@@ -9,6 +9,7 @@ const loadJson = (relativePath) => {
 const projects = loadJson('../../src/data/projects.json');
 const assetsRound1 = loadJson('../../src/data/assetsRound1.json');
 const obstacles = loadJson('../../src/data/obstacles.json');
+const macroEvents = loadJson('../../src/data/macroEvents.json');
 
 const shuffle = (values) => {
   const shuffled = [...values];
@@ -43,6 +44,10 @@ export function buildInitialDeckState(playerSeats) {
     },
     obstacles: {
       drawPile: shuffle(obstacles.map((card) => card.id)),
+      discardPile: [],
+    },
+    macroEvents: {
+      drawPile: shuffle(macroEvents.map((card) => card.id)),
       discardPile: [],
     },
   };

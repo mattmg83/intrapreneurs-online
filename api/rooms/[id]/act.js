@@ -49,6 +49,29 @@ const projectLookup = Object.fromEntries(projectCards.map((card) => [card.id, ca
 
 const isAssetEligible = (assetCard) => !assetCard?.pickCondition;
 
+const getRoundModifierValue = (room, key, fallback = 0) => {
+  const modifiers = Array.isArray(room?.roundModifiers) ? room.roundModifiers : [];
+  for (const modifier of modifiers) {
+    const value = Number(modifier?.[key]);
+    if (!Number.isNaN(value) && Number.isFinite(value)) {
+      return value;
+    }
+  }
+
+  return fallback;
+};
+
+const getRoundDiscardDebt = (room, seat) => Number(room?.mustDiscardBySeat?.[seat] ?? 0);
+
+const hasPendingRoundDiscards = (room) => {
+  const bySeat = room?.mustDiscardBySeat;
+  if (!bySeat || typeof bySeat !== 'object') {
+    return false;
+  }
+
+  return Object.values(bySeat).some((count) => Number(count) > 0);
+};
+
 const drawTop = (deckState) => {
   if (!Array.isArray(deckState?.drawPile) || deckState.drawPile.length === 0) {
     return {
@@ -108,8 +131,9 @@ function applyPickAsset(room, seat, action) {
   }
 
   const currentHandSize = Number(room?.seats?.[seat]?.handSize ?? 0);
+  const handLimit = getRoundModifierValue(room, 'handLimit', 7);
   const nextHandSize = currentHandSize + 1;
-  const mustDiscard = nextHandSize > 7;
+  const mustDiscard = nextHandSize > handLimit;
 
   const updatedRoom = {
     ...room,
@@ -119,7 +143,7 @@ function applyPickAsset(room, seat, action) {
         ...(room.seats?.[seat] ?? {}),
         handSize: nextHandSize,
         mustDiscard,
-        discardTarget: mustDiscard ? 7 : null,
+        discardTarget: mustDiscard ? handLimit : null,
       },
     },
     market: {
@@ -390,6 +414,7 @@ function applyPauseProject(room, seat, action) {
 function applyRoomAction(room, seat, action) {
   switch (action.type) {
     case 'END_TURN':
+    case 'ADVANCE_ROUND':
       return {
         room: reduceRoomState(room, action),
         privateDelta: null,
@@ -420,9 +445,17 @@ function applyRoomAction(room, seat, action) {
         : 7;
       const mustDiscard = nextHandSize > discardTarget;
 
+      const roundDiscardDebt = getRoundDiscardDebt(room, seat);
+      const nextRoundDiscardDebt = Math.max(roundDiscardDebt - 1, 0);
+      const nextMustDiscardBySeat = {
+        ...(room.mustDiscardBySeat ?? {}),
+        [seat]: nextRoundDiscardDebt,
+      };
+
       return {
         room: {
           ...room,
+          mustDiscardBySeat: nextMustDiscardBySeat,
           seats: {
             ...(room.seats ?? {}),
             [seat]: {
@@ -479,7 +512,8 @@ export default async function handler(req, res) {
     action.type !== 'DISCARD_ASSET' &&
     action.type !== 'START_PROJECT' &&
     action.type !== 'ALLOCATE_TO_PROJECT' &&
-    action.type !== 'PAUSE_PROJECT'
+    action.type !== 'PAUSE_PROJECT' &&
+    action.type !== 'ADVANCE_ROUND'
   ) {
     return res.status(400).json({ error: 'Unsupported action type.' });
   }
@@ -522,9 +556,19 @@ export default async function handler(req, res) {
 
     const isPlayersTurn = room.currentSeat === seat;
     const discardRequired = Boolean(seatInfo?.mustDiscard);
+    const roundDiscardDebt = getRoundDiscardDebt(room, seat);
+    const hasRoundDiscardDebt = roundDiscardDebt > 0;
+    const pendingRoundDiscards = hasPendingRoundDiscards(room);
+
+    if (pendingRoundDiscards && action.type !== 'DISCARD_ASSET') {
+      return res.status(409).json({
+        error: 'Round-end discards are pending. Resolve discards before continuing play.',
+        latestState: toPublicRoomState(room),
+      });
+    }
 
     if (!isPlayersTurn) {
-      const canDiscardOutOfTurn = action.type === 'DISCARD_ASSET' && discardRequired;
+      const canDiscardOutOfTurn = action.type === 'DISCARD_ASSET' && (discardRequired || hasRoundDiscardDebt);
 
       if (!canDiscardOutOfTurn) {
         return res.status(409).json({
@@ -532,6 +576,13 @@ export default async function handler(req, res) {
           latestState: toPublicRoomState(room),
         });
       }
+    }
+
+    if (action.type === 'DISCARD_ASSET' && !discardRequired && !hasRoundDiscardDebt) {
+      return res.status(409).json({
+        error: 'No discard is currently required for this seat.',
+        latestState: toPublicRoomState(room),
+      });
     }
 
     if (action.type === 'END_TURN' && discardRequired) {
