@@ -8,12 +8,43 @@ type PrivateDelta = {
   removedCardIds: string[];
 };
 
+type SeatProject = {
+  id?: string;
+  stage?: 'NONE' | 'MV' | 'TF';
+  paused?: boolean;
+  abandonedPenaltyCount?: number;
+};
+
+type SeatState = {
+  handSize?: number;
+  mustDiscard?: boolean;
+  discardTarget?: number | null;
+  projects?: SeatProject[];
+};
+
+type SeatScoreBreakdown = {
+  growth: number;
+  fuel: number;
+  mvCompletedCount: number;
+  tfCompletedCount: number;
+  pausedOrAbandonedCount: number;
+  baseScore: number;
+  finalScore: number;
+};
+
 type RoomState = {
   currentSeat?: string;
   currentRound?: number;
+  totalRounds?: number;
   phase?: string;
   version?: number;
-  seats?: Record<string, { handSize?: number; mustDiscard?: boolean; discardTarget?: number | null }>;
+  gameOver?: boolean;
+  finalScoring?: {
+    bySeat?: Record<string, SeatScoreBreakdown>;
+    winners?: string[];
+    isTie?: boolean;
+  } | null;
+  seats?: Record<string, SeatState>;
   market?: {
     availableAssets?: string[];
   };
@@ -413,15 +444,23 @@ export function GamePage() {
   }, [roomState?.currentSeat, session.seat]);
 
   const mySeatState = roomState?.seats?.[session.seat];
+  const scoreBySeat = roomState?.finalScoring?.bySeat ?? {};
+  const winnerSeats = roomState?.finalScoring?.winners ?? [];
+  const isGameOver = Boolean(roomState?.gameOver);
   const myPublicHandSize = mySeatState?.handSize;
   const mustDiscard = Boolean(mySeatState?.mustDiscard);
   const discardTarget = mySeatState?.discardTarget ?? 7;
   const marketAssets = roomState?.market?.availableAssets ?? [];
 
   const canEndTurn =
-    roomState?.currentSeat === session.seat && !isEndingTurn && roomState?.version != null && !mustDiscard;
-  const canPickAsset = roomState?.currentSeat === session.seat && roomState?.version != null;
-  const canDiscardAsset = roomState?.version != null && (roomState?.currentSeat === session.seat || mustDiscard);
+    !isGameOver &&
+    roomState?.currentSeat === session.seat &&
+    !isEndingTurn &&
+    roomState?.version != null &&
+    !mustDiscard;
+  const canPickAsset = !isGameOver && roomState?.currentSeat === session.seat && roomState?.version != null;
+  const canDiscardAsset =
+    !isGameOver && roomState?.version != null && (roomState?.currentSeat === session.seat || mustDiscard);
 
   return (
     <PageShell title="Game" subtitle="Room session details loaded from query parameters.">
@@ -540,6 +579,49 @@ export function GamePage() {
           <p className="mt-3 rounded-md border border-rose-700 bg-rose-900/30 px-3 py-2 text-sm text-rose-200">
             {actionError}
           </p>
+        ) : null}
+
+
+
+        {isGameOver ? (
+          <section className="mt-6 rounded-md border border-emerald-700 bg-emerald-900/20 p-4">
+            <h3 className="text-base font-semibold text-emerald-100">End Game</h3>
+            <p className="mt-1 text-sm text-emerald-200">
+              {winnerSeats.length > 1
+                ? `Tie between seats: ${winnerSeats.join(', ')}`
+                : `Winner: Seat ${winnerSeats[0] ?? '(none)'}`}
+            </p>
+            <div className="mt-3 overflow-x-auto">
+              <table className="min-w-full text-left text-sm text-slate-100">
+                <thead className="text-xs uppercase tracking-wide text-slate-300">
+                  <tr>
+                    <th className="px-2 py-1">Seat</th>
+                    <th className="px-2 py-1">Growth</th>
+                    <th className="px-2 py-1">Fuel</th>
+                    <th className="px-2 py-1">MV</th>
+                    <th className="px-2 py-1">TF</th>
+                    <th className="px-2 py-1">Base</th>
+                    <th className="px-2 py-1">Penalty</th>
+                    <th className="px-2 py-1">Final</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(scoreBySeat).map(([seat, breakdown]) => (
+                    <tr key={seat} className="border-t border-slate-700/70">
+                      <td className="px-2 py-1 font-medium">{seat}</td>
+                      <td className="px-2 py-1">{breakdown.growth}</td>
+                      <td className="px-2 py-1">{breakdown.fuel}</td>
+                      <td className="px-2 py-1">{breakdown.mvCompletedCount}</td>
+                      <td className="px-2 py-1">{breakdown.tfCompletedCount}</td>
+                      <td className="px-2 py-1">{breakdown.baseScore}</td>
+                      <td className="px-2 py-1">-{breakdown.pausedOrAbandonedCount}</td>
+                      <td className="px-2 py-1 font-semibold">{breakdown.finalScore}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
         ) : null}
 
         {toastMessage ? (
