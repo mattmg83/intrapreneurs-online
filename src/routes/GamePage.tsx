@@ -17,6 +17,7 @@ export function GamePage() {
   const [loading, setLoading] = useState(true);
   const [isEndingTurn, setIsEndingTurn] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const etagRef = useRef<string | null>(null);
 
   const session = useMemo(
@@ -141,10 +142,22 @@ export function GamePage() {
 
       const payload = (await response.json()) as {
         room?: RoomState;
+        latestState?: RoomState;
         error?: string;
       };
 
       if (!response.ok) {
+        if (response.status === 409 && payload.latestState) {
+          setRoomState(payload.latestState);
+          setToastMessage('State updated, try again.');
+          window.setTimeout(() => {
+            setToastMessage((currentMessage) =>
+              currentMessage === 'State updated, try again.' ? null : currentMessage,
+            );
+          }, 3000);
+          return;
+        }
+
         throw new Error(payload.error ?? 'Failed to end turn.');
       }
 
@@ -154,6 +167,7 @@ export function GamePage() {
       }
 
       setRoomState(payload.room ?? null);
+      setToastMessage(null);
     } catch (submitError) {
       setActionError(submitError instanceof Error ? submitError.message : 'Failed to end turn.');
     } finally {
@@ -234,6 +248,13 @@ export function GamePage() {
             {actionError}
           </p>
         ) : null}
+
+        {toastMessage ? (
+          <p className="mt-3 rounded-md border border-amber-600 bg-amber-900/30 px-3 py-2 text-sm text-amber-100">
+            {toastMessage}
+          </p>
+        ) : null}
+
       </section>
 
       <div>
