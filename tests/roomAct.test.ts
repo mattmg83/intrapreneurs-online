@@ -57,7 +57,10 @@ describe('POST /api/rooms/:id/act', () => {
                   version: 7,
                   currentSeat: 'A',
                   seats: {
-                    A: { tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', connected: true },
+                    A: {
+                      tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+                      connected: true,
+                    },
                     B: { connected: true },
                   },
                   log: [],
@@ -113,7 +116,10 @@ describe('POST /api/rooms/:id/act', () => {
                   version: 2,
                   currentSeat: 'A',
                   seats: {
-                    A: { tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', connected: true },
+                    A: {
+                      tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+                      connected: true,
+                    },
                     B: { connected: true },
                   },
                 }),
@@ -217,25 +223,326 @@ describe('POST /api/rooms/:id/act', () => {
     await handler(req, res);
 
     expect(res.statusCode).toBe(200);
-    expect((res.body as { privateDelta: { seat: string; addedCardIds: string[] } }).privateDelta).toEqual({
+    expect(
+      (res.body as { privateDelta: { seat: string; addedCardIds: string[] } }).privateDelta,
+    ).toEqual({
       seat: 'A',
       addedCardIds: ['asset-a1'],
       removedCardIds: [],
     });
-    expect((res.body as { room: { market: { availableAssets: string[] } } }).room.market.availableAssets).toEqual([
-      'asset-a2',
-      'asset-a3',
-      'asset-a4',
-    ]);
-    expect((res.body as { room: { seats: Record<string, { handSize: number }> } }).room.seats.A.handSize).toBe(8);
-    expect((res.body as { room: { seats: Record<string, { mustDiscard?: boolean; discardTarget?: number | null }> } }).room.seats.A.mustDiscard).toBe(true);
-    expect((res.body as { room: { seats: Record<string, { mustDiscard?: boolean; discardTarget?: number | null }> } }).room.seats.A.discardTarget).toBe(7);
+    expect(
+      (res.body as { room: { market: { availableAssets: string[] } } }).room.market.availableAssets,
+    ).toEqual(['asset-a2', 'asset-a3', 'asset-a4']);
+    expect(
+      (res.body as { room: { seats: Record<string, { handSize: number }> } }).room.seats.A.handSize,
+    ).toBe(8);
+    expect(
+      (
+        res.body as {
+          room: { seats: Record<string, { mustDiscard?: boolean; discardTarget?: number | null }> };
+        }
+      ).room.seats.A.mustDiscard,
+    ).toBe(true);
+    expect(
+      (
+        res.body as {
+          room: { seats: Record<string, { mustDiscard?: boolean; discardTarget?: number | null }> };
+        }
+      ).room.seats.A.discardTarget,
+    ).toBe(7);
 
     const patchCall = fetchMock.mock.calls[1];
     const patchBody = JSON.parse(patchCall[1].body);
     const updatedRoom = JSON.parse(patchBody.files['room.json'].content);
 
     expect(updatedRoom.decks.assetsRound1.drawPile).toEqual(['asset-a5']);
+  });
+
+  it('applies START_PROJECT from market, replenishes projects market, and keeps current seat until END_TURN', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            files: {
+              'room.json': {
+                content: JSON.stringify({
+                  version: 9,
+                  currentSeat: 'A',
+                  seats: {
+                    A: {
+                      tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+                      connected: true,
+                      projects: [],
+                      projectsStartedThisRound: 0,
+                    },
+                    B: { connected: true, projects: [], projectsStartedThisRound: 0 },
+                  },
+                  market: {
+                    availableProjects: [
+                      'project-p1',
+                      'project-p2',
+                      'project-p3',
+                      'project-p4',
+                      'project-p5',
+                    ],
+                  },
+                  decks: {
+                    projects: {
+                      drawPile: ['project-p6', 'project-p7'],
+                      discardPile: [],
+                    },
+                  },
+                }),
+              },
+            },
+          },
+          { status: 200, headers: { ETag: 'etag-1' } },
+        ),
+      )
+      .mockResolvedValueOnce(jsonResponse({}, { status: 200, headers: { ETag: 'etag-2' } }));
+
+    const req = {
+      method: 'POST',
+      query: { id: 'room-1' },
+      body: {
+        seat: 'A',
+        token: 'abc',
+        expectedVersion: 9,
+        action: { type: 'START_PROJECT', projectId: 'project-p3' },
+      },
+    };
+    const res = createRes();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect((res.body as { privateDelta: null }).privateDelta).toBeNull();
+    expect((res.body as { room: { currentSeat: string } }).room.currentSeat).toBe('A');
+    expect(
+      (
+        res.body as {
+          room: {
+            seats: Record<
+              string,
+              {
+                projects: Array<{
+                  id: string;
+                  allocatedTotals: Record<string, number>;
+                  stage: string;
+                  paused: boolean;
+                }>;
+                projectsStartedThisRound: number;
+              }
+            >;
+          };
+        }
+      ).room.seats.A.projects,
+    ).toEqual([
+      {
+        id: 'project-p3',
+        allocatedTotals: {},
+        allocatedCardIds: [],
+        stage: 'NONE',
+        paused: false,
+      },
+    ]);
+    expect(
+      (res.body as { room: { seats: Record<string, { projectsStartedThisRound: number }> } }).room
+        .seats.A.projectsStartedThisRound,
+    ).toBe(1);
+    expect(
+      (res.body as { room: { market: { availableProjects: string[] } } }).room.market
+        .availableProjects,
+    ).toEqual(['project-p1', 'project-p2', 'project-p4', 'project-p5', 'project-p6']);
+
+    const patchCall = fetchMock.mock.calls[1];
+    const patchBody = JSON.parse(patchCall[1].body);
+    const updatedRoom = JSON.parse(patchBody.files['room.json'].content);
+
+    expect(updatedRoom.decks.projects.drawPile).toEqual(['project-p7']);
+  });
+
+  it('applies ALLOCATE_TO_PROJECT as free action, updates hand proof, and advances project stage', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            files: {
+              'room.json': {
+                content: JSON.stringify({
+                  version: 11,
+                  currentSeat: 'A',
+                  seats: {
+                    A: {
+                      tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+                      connected: true,
+                      handSize: 4,
+                      projects: [
+                        {
+                          id: 'project-p2',
+                          allocatedTotals: { budget: 0, headcount: 0, tailwind: 0 },
+                          stage: 'NONE',
+                          paused: false,
+                        },
+                      ],
+                      lastHandHash: null,
+                    },
+                    B: { connected: true, handSize: 2, projects: [], projectsStartedThisRound: 0 },
+                  },
+                }),
+              },
+            },
+          },
+          { status: 200, headers: { ETag: 'etag-1' } },
+        ),
+      )
+      .mockResolvedValueOnce(jsonResponse({}, { status: 200, headers: { ETag: 'etag-2' } }));
+
+    const req = {
+      method: 'POST',
+      query: { id: 'room-1' },
+      body: {
+        seat: 'A',
+        token: 'abc',
+        expectedVersion: 11,
+        action: {
+          type: 'ALLOCATE_TO_PROJECT',
+          projectId: 'project-p2',
+          cardIds: ['asset-a1', 'asset-a4'],
+          handHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        },
+      },
+    };
+    const res = createRes();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect((res.body as { room: { currentSeat: string } }).room.currentSeat).toBe('A');
+    expect(
+      (res.body as { privateDelta: { removedCardIds: string[] } }).privateDelta.removedCardIds,
+    ).toEqual(['asset-a1', 'asset-a4']);
+    expect(
+      (res.body as { room: { seats: Record<string, { handSize: number }> } }).room.seats.A.handSize,
+    ).toBe(2);
+    expect(
+      (res.body as { room: { seats: Record<string, { lastHandHash: string }> } }).room.seats.A
+        .lastHandHash,
+    ).toBe('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    expect(
+      (
+        res.body as {
+          room: {
+            seats: Record<
+              string,
+              {
+                projects: Array<{
+                  allocatedTotals: { budget: number; headcount: number; tailwind: number };
+                  stage: string;
+                }>;
+              }
+            >;
+          };
+        }
+      ).room.seats.A.projects[0],
+    ).toEqual({
+      id: 'project-p2',
+      allocatedTotals: { budget: -3, headcount: 1, tailwind: 3 },
+      allocatedCardIds: ['asset-a1', 'asset-a4'],
+      stage: 'MV',
+      paused: false,
+    });
+  });
+
+  it('applies PAUSE_PROJECT by returning allocated cards and marking penalty metadata', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            files: {
+              'room.json': {
+                content: JSON.stringify({
+                  version: 12,
+                  currentSeat: 'A',
+                  seats: {
+                    A: {
+                      tokenHash: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+                      connected: true,
+                      handSize: 2,
+                      projects: [
+                        {
+                          id: 'project-p2',
+                          allocatedTotals: { budget: -3, headcount: 1, tailwind: 3 },
+                          allocatedCardIds: ['asset-a1', 'asset-a4'],
+                          stage: 'MV',
+                          paused: false,
+                        },
+                      ],
+                    },
+                  },
+                }),
+              },
+            },
+          },
+          { status: 200, headers: { ETag: 'etag-1' } },
+        ),
+      )
+      .mockResolvedValueOnce(jsonResponse({}, { status: 200, headers: { ETag: 'etag-2' } }));
+
+    const req = {
+      method: 'POST',
+      query: { id: 'room-1' },
+      body: {
+        seat: 'A',
+        token: 'abc',
+        expectedVersion: 12,
+        action: { type: 'PAUSE_PROJECT', projectId: 'project-p2' },
+      },
+    };
+    const res = createRes();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(
+      (res.body as { room: { seats: Record<string, { handSize: number }> } }).room.seats.A.handSize,
+    ).toBe(4);
+    expect(
+      (res.body as { privateDelta: { addedCardIds: string[] } }).privateDelta.addedCardIds,
+    ).toEqual(['asset-a1', 'asset-a4']);
+    expect(
+      (
+        res.body as {
+          room: {
+            seats: Record<
+              string,
+              {
+                projects: Array<{
+                  paused: boolean;
+                  restartBurdenTailwind: number;
+                  abandonedPenaltyCount: number;
+                  allocatedCardIds: string[];
+                }>;
+              }
+            >;
+          };
+        }
+      ).room.seats.A.projects[0],
+    ).toMatchObject({
+      paused: true,
+      restartBurdenTailwind: 1,
+      abandonedPenaltyCount: 1,
+      allocatedCardIds: [],
+    });
   });
 
   it('blocks END_TURN when seat must discard', async () => {
@@ -286,7 +593,6 @@ describe('POST /api/rooms/:id/act', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-
   it('applies DISCARD_ASSET and clears mustDiscard when target is met', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
@@ -334,15 +640,25 @@ describe('POST /api/rooms/:id/act', () => {
     await handler(req, res);
 
     expect(res.statusCode).toBe(200);
-    expect((res.body as { room: { seats: Record<string, { handSize: number; mustDiscard: boolean; discardTarget: number | null }> } }).room.seats.A).toEqual({
+    expect(
+      (
+        res.body as {
+          room: {
+            seats: Record<
+              string,
+              { handSize: number; mustDiscard: boolean; discardTarget: number | null }
+            >;
+          };
+        }
+      ).room.seats.A,
+    ).toEqual({
       connected: true,
       handSize: 7,
       mustDiscard: false,
       discardTarget: null,
     });
-    expect((res.body as { privateDelta: { removedCardIds: string[] } }).privateDelta.removedCardIds).toEqual([
-      'asset-a1',
-    ]);
+    expect(
+      (res.body as { privateDelta: { removedCardIds: string[] } }).privateDelta.removedCardIds,
+    ).toEqual(['asset-a1']);
   });
-
 });

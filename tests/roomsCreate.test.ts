@@ -77,6 +77,7 @@ describe('POST /api/rooms', () => {
     expect(createdRoom.seats.A.handSize).toBe(2);
     expect(createdRoom.seats.B.handSize).toBe(2);
     expect(createdRoom.seats.C.handSize).toBe(2);
+    expect(createdRoom.seats.A.lastHandHash).toBeNull();
     expect(createdRoom.dealQueue.A).toHaveLength(2);
     expect(createdRoom.dealQueue.B).toHaveLength(2);
     expect(createdRoom.dealQueue.C).toHaveLength(2);

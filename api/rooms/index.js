@@ -13,6 +13,9 @@ function buildInitialPublicState(playerCount, seatTokenHashes) {
       handSize: 2,
       mustDiscard: false,
       discardTarget: null,
+      projects: [],
+      projectsStartedThisRound: 0,
+      lastHandHash: null,
       tokenHash: seatTokenHashes[seat],
       publicFlags: {
         hasDefense: false,
