@@ -1,15 +1,8 @@
 import crypto from 'node:crypto';
-import { readFileSync } from 'node:fs';
-
-const loadJson = (relativePath) => {
-  const fileUrl = new URL(relativePath, import.meta.url);
-  return JSON.parse(readFileSync(fileUrl, 'utf8'));
-};
-
-const projects = loadJson('../../src/data/projects.json');
-const assetsRound1 = loadJson('../../src/data/assetsRound1.json');
-const obstacles = loadJson('../../src/data/obstacles.json');
-const macroEvents = loadJson('../../src/data/macroEvents.json');
+import projects from '../../src/data/projects.json' with { type: 'json' };
+import assetsRound1 from '../../src/data/assetsRound1.json' with { type: 'json' };
+import obstacles from '../../src/data/obstacles.json' with { type: 'json' };
+import macroEvents from '../../src/data/macroEvents.json' with { type: 'json' };
 
 const shuffle = (values) => {
   const shuffled = [...values];
