@@ -50,11 +50,23 @@ export type CardDeck = {
 
 export type DeckState = Record<DeckKey, CardDeck>;
 
+const normalizeMacroEvents = (cards: typeof macroEventsData): MacroEventCard[] => {
+  return cards.map((card) => ({
+    id: card.id,
+    name: card.name,
+    ruleModifiers: Object.fromEntries(
+      Object.entries(card.ruleModifiers).filter(
+        (entry): entry is [string, number] => typeof entry[1] === 'number',
+      ),
+    ),
+  }));
+};
+
 export const cardCatalog = {
   assetsRound1: assetsRound1Data as AssetCard[],
   projects: projectsData as ProjectCard[],
   obstacles: obstaclesData as ObstacleCard[],
-  macroEvents: macroEventsData as MacroEventCard[],
+  macroEvents: normalizeMacroEvents(macroEventsData),
 };
 
 const hashSeed = (seed: string): number => {
