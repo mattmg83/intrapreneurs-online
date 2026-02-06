@@ -1,5 +1,13 @@
 import { githubRequest } from '../_lib/github.js';
 
+function normalizeEtag(value) {
+  if (!value) {
+    return '';
+  }
+
+  return String(value).trim();
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
@@ -12,17 +20,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const headers = {};
-    const incomingEtag = req.headers['if-none-match'];
-    if (incomingEtag && typeof incomingEtag === 'string') {
-      headers['If-None-Match'] = incomingEtag;
-    }
-
-    const gistResponse = await githubRequest(`/gists/${roomId}`, { headers });
-
-    if (gistResponse.status === 304) {
-      return res.status(304).end();
-    }
+    const gistResponse = await githubRequest(`/gists/${roomId}`);
 
     if (!gistResponse.ok) {
       const details = await gistResponse.text();
@@ -32,10 +30,19 @@ export default async function handler(req, res) {
       });
     }
 
-    const etag = gistResponse.headers.get('etag');
-    if (etag) {
-      res.setHeader('ETag', etag);
+    const githubEtag = normalizeEtag(gistResponse.headers.get('etag'));
+    if (githubEtag) {
+      res.setHeader('ETag', githubEtag);
       res.setHeader('Cache-Control', 'private, max-age=0, must-revalidate');
+    }
+
+    const ifNoneMatchHeader = req.headers['if-none-match'];
+    const incomingEtag = Array.isArray(ifNoneMatchHeader)
+      ? normalizeEtag(ifNoneMatchHeader[0])
+      : normalizeEtag(ifNoneMatchHeader);
+
+    if (incomingEtag && githubEtag && incomingEtag === githubEtag) {
+      return res.status(304).end();
     }
 
     const gist = await gistResponse.json();
@@ -46,9 +53,7 @@ export default async function handler(req, res) {
 
     const room = JSON.parse(roomFile.content);
 
-    return res.status(200).json({
-      room,
-    });
+    return res.status(200).json(room);
   } catch (error) {
     return res.status(500).json({
       error: error instanceof Error ? error.message : 'Unexpected error.',
