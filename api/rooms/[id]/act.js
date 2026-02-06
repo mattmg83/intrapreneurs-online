@@ -42,6 +42,10 @@ const assetsRound1Cards = JSON.parse(
   readFileSync(new URL('../../../src/data/assetsRound1.json', import.meta.url), 'utf8'),
 );
 const assetLookup = Object.fromEntries(assetsRound1Cards.map((card) => [card.id, card]));
+const projectCards = JSON.parse(
+  readFileSync(new URL('../../../src/data/projects.json', import.meta.url), 'utf8'),
+);
+const projectLookup = Object.fromEntries(projectCards.map((card) => [card.id, card]));
 
 const isAssetEligible = (assetCard) => !assetCard?.pickCondition;
 
@@ -75,7 +79,7 @@ function applyPickAsset(room, seat, action) {
   const selectedMarketCardId =
     typeof action.cardId === 'string' && eligibleMarketAssets.includes(action.cardId)
       ? action.cardId
-      : eligibleMarketAssets[0] ?? null;
+      : (eligibleMarketAssets[0] ?? null);
 
   let pickedCardId = selectedMarketCardId;
   let nextAvailableAssets = availableAssets;
@@ -138,6 +142,251 @@ function applyPickAsset(room, seat, action) {
   };
 }
 
+function applyStartProject(room, seat, action) {
+  const market = room.market ?? {};
+  const availableProjects = Array.isArray(market.availableProjects) ? market.availableProjects : [];
+
+  if (availableProjects.length === 0) {
+    throw new Error('No projects available to start.');
+  }
+
+  const selectedProjectId =
+    typeof action.projectId === 'string' && availableProjects.includes(action.projectId)
+      ? action.projectId
+      : null;
+
+  if (!selectedProjectId) {
+    throw new Error('Selected project is not available in market.');
+  }
+
+  let nextProjectsDeck = room?.decks?.projects ?? { drawPile: [], discardPile: [] };
+  const nextAvailableProjects = availableProjects.filter(
+    (projectId) => projectId !== selectedProjectId,
+  );
+
+  while (
+    nextAvailableProjects.length < 5 &&
+    Array.isArray(nextProjectsDeck.drawPile) &&
+    nextProjectsDeck.drawPile.length > 0
+  ) {
+    const [drawnProjectId, ...rest] = nextProjectsDeck.drawPile;
+    nextAvailableProjects.push(drawnProjectId);
+    nextProjectsDeck = {
+      ...nextProjectsDeck,
+      drawPile: rest,
+      discardPile: [...(nextProjectsDeck.discardPile ?? []), drawnProjectId],
+    };
+  }
+
+  const seatState = room?.seats?.[seat] ?? {};
+  const currentProjects = Array.isArray(seatState.projects) ? seatState.projects : [];
+
+  const projectInstance = {
+    id: selectedProjectId,
+    allocatedTotals: {},
+    allocatedCardIds: [],
+    stage: 'NONE',
+    paused: false,
+  };
+
+  return {
+    room: {
+      ...room,
+      seats: {
+        ...(room.seats ?? {}),
+        [seat]: {
+          ...seatState,
+          projects: [...currentProjects, projectInstance],
+          projectsStartedThisRound: Number(seatState.projectsStartedThisRound ?? 0) + 1,
+        },
+      },
+      market: {
+        ...market,
+        availableProjects: nextAvailableProjects,
+      },
+      decks: {
+        ...(room.decks ?? {}),
+        projects: nextProjectsDeck,
+      },
+    },
+    privateDelta: null,
+  };
+}
+
+function computeProjectStage(projectId, allocatedTotals) {
+  const project = projectLookup[projectId] ?? {
+    mvReq: Number.POSITIVE_INFINITY,
+    tfReq: Number.POSITIVE_INFINITY,
+  };
+  const tailwindTotal = Number(allocatedTotals?.tailwind ?? 0);
+
+  if (tailwindTotal >= Number(project.mvReq ?? 0) + Number(project.tfReq ?? 0)) {
+    return 'TF';
+  }
+
+  if (tailwindTotal >= Number(project.mvReq ?? 0)) {
+    return 'MV';
+  }
+
+  return 'NONE';
+}
+
+function applyAllocateToProject(room, seat, action) {
+  const seatState = room?.seats?.[seat] ?? {};
+  const seatProjects = Array.isArray(seatState.projects) ? seatState.projects : [];
+  const activeProjects = seatProjects.filter(
+    (project) => project && project.paused !== true && project.stage !== 'TF',
+  );
+
+  if (activeProjects.length === 0) {
+    throw new Error('Seat does not have an active project to allocate to.');
+  }
+
+  const cardIds = Array.isArray(action.cardIds) ? action.cardIds : [];
+  if (cardIds.length === 0) {
+    throw new Error('Must provide at least one card id to allocate.');
+  }
+
+  const uniqueCardIds = new Set(cardIds);
+  if (uniqueCardIds.size !== cardIds.length) {
+    throw new Error('Duplicate card ids are not allowed in allocation.');
+  }
+
+  const handSize = Number(seatState.handSize ?? 0);
+  if (cardIds.length > handSize) {
+    throw new Error('Cannot allocate more cards than current hand size.');
+  }
+
+  if (typeof action.handHash !== 'string' || !/^[a-f0-9]{64}$/i.test(action.handHash)) {
+    throw new Error('Missing or invalid handHash proof.');
+  }
+
+  const targetProject =
+    typeof action.projectId === 'string'
+      ? activeProjects.find((project) => project.id === action.projectId)
+      : activeProjects[0];
+
+  if (!targetProject) {
+    throw new Error('Selected project is not active for this seat.');
+  }
+
+  const nextTotals = {
+    budget: Number(targetProject?.allocatedTotals?.budget ?? 0),
+    headcount: Number(targetProject?.allocatedTotals?.headcount ?? 0),
+    tailwind: Number(targetProject?.allocatedTotals?.tailwind ?? 0),
+  };
+
+  for (const cardId of cardIds) {
+    const card = assetLookup[cardId];
+    if (!card?.outcomes) {
+      throw new Error(`Unknown asset card id: ${cardId}`);
+    }
+
+    nextTotals.budget += Number(card.outcomes.budget ?? 0);
+    nextTotals.headcount += Number(card.outcomes.headcount ?? 0);
+    nextTotals.tailwind += Number(card.outcomes.tailwind ?? 0);
+  }
+
+  const updatedProjects = seatProjects.map((project) => {
+    if (project !== targetProject) {
+      return project;
+    }
+
+    return {
+      ...project,
+      allocatedTotals: nextTotals,
+      allocatedCardIds: [
+        ...(Array.isArray(project.allocatedCardIds) ? project.allocatedCardIds : []),
+        ...cardIds,
+      ],
+      stage: computeProjectStage(project.id, nextTotals),
+    };
+  });
+
+  return {
+    room: {
+      ...room,
+      seats: {
+        ...(room.seats ?? {}),
+        [seat]: {
+          ...seatState,
+          handSize: handSize - cardIds.length,
+          lastHandHash: action.handHash,
+          projects: updatedProjects,
+        },
+      },
+    },
+    privateDelta: {
+      seat,
+      addedCardIds: [],
+      removedCardIds: cardIds,
+    },
+  };
+}
+
+function applyPauseProject(room, seat, action) {
+  const seatState = room?.seats?.[seat] ?? {};
+  const seatProjects = Array.isArray(seatState.projects) ? seatState.projects : [];
+
+  const targetProject =
+    typeof action.projectId === 'string'
+      ? seatProjects.find((project) => project?.id === action.projectId)
+      : seatProjects.find((project) => project?.paused !== true);
+
+  if (!targetProject) {
+    throw new Error('No project available to pause.');
+  }
+
+  if (targetProject.paused === true) {
+    throw new Error('Project is already paused.');
+  }
+
+  const allocatedCardIds = Array.isArray(targetProject.allocatedCardIds)
+    ? targetProject.allocatedCardIds
+    : [];
+
+  const restartBurdenTailwind = Number(projectLookup[targetProject.id]?.restartBurdenTailwind ?? 1);
+
+  const updatedProjects = seatProjects.map((project) => {
+    if (project !== targetProject) {
+      return project;
+    }
+
+    return {
+      ...project,
+      paused: true,
+      restartBurdenTailwind,
+      abandonedPenaltyCount: 1,
+      allocatedTotals: {
+        budget: 0,
+        headcount: 0,
+        tailwind: 0,
+      },
+      allocatedCardIds: [],
+      stage: 'NONE',
+    };
+  });
+
+  return {
+    room: {
+      ...room,
+      seats: {
+        ...(room.seats ?? {}),
+        [seat]: {
+          ...seatState,
+          handSize: Number(seatState.handSize ?? 0) + allocatedCardIds.length,
+          projects: updatedProjects,
+        },
+      },
+    },
+    privateDelta: {
+      seat,
+      addedCardIds: allocatedCardIds,
+      removedCardIds: [],
+    },
+  };
+}
+
 function applyRoomAction(room, seat, action) {
   switch (action.type) {
     case 'END_TURN':
@@ -147,6 +396,12 @@ function applyRoomAction(room, seat, action) {
       };
     case 'PICK_ASSET':
       return applyPickAsset(room, seat, action);
+    case 'START_PROJECT':
+      return applyStartProject(room, seat, action);
+    case 'ALLOCATE_TO_PROJECT':
+      return applyAllocateToProject(room, seat, action);
+    case 'PAUSE_PROJECT':
+      return applyPauseProject(room, seat, action);
     case 'DISCARD_ASSET': {
       const seatState = room?.seats?.[seat] ?? {};
       const currentHandSize = Number(seatState.handSize ?? 0);
@@ -221,7 +476,10 @@ export default async function handler(req, res) {
   if (
     action.type !== 'END_TURN' &&
     action.type !== 'PICK_ASSET' &&
-    action.type !== 'DISCARD_ASSET'
+    action.type !== 'DISCARD_ASSET' &&
+    action.type !== 'START_PROJECT' &&
+    action.type !== 'ALLOCATE_TO_PROJECT' &&
+    action.type !== 'PAUSE_PROJECT'
   ) {
     return res.status(400).json({ error: 'Unsupported action type.' });
   }
