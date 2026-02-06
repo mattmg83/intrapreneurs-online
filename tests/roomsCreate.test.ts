@@ -72,6 +72,10 @@ describe('POST /api/rooms', () => {
     const createRequestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     const createdRoom = JSON.parse(createRequestBody.files['room.json'].content);
 
+    expect(createdRoom.version).toBe(1);
+    expect(createdRoom.currentRound).toBe(1);
+    expect(createdRoom.phase).toBe('turn');
+    expect(createdRoom.currentSeat).toBe('A');
     expect(createdRoom.market.availableProjects).toHaveLength(5);
     expect(createdRoom.market.availableAssets).toHaveLength(3);
     expect(createdRoom.seats.A.handSize).toBe(2);

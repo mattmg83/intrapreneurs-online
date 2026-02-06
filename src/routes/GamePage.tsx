@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PageShell } from '../components/PageShell';
+import { fetchJson } from '../lib/http';
 
 type PrivateDelta = {
   seat: string;
@@ -48,7 +49,23 @@ type RoomState = {
   seats?: Record<string, SeatState>;
   market?: {
     availableAssets?: string[];
+    availableProjects?: string[];
   };
+};
+
+const hasInitializedState = (roomState: RoomState | null): roomState is RoomState => {
+  if (!roomState) {
+    return false;
+  }
+
+  return (
+    typeof roomState.currentSeat === 'string' &&
+    typeof roomState.currentRound === 'number' &&
+    typeof roomState.phase === 'string' &&
+    typeof roomState.version === 'number' &&
+    Array.isArray(roomState.market?.availableAssets) &&
+    Array.isArray(roomState.market?.availableProjects)
+  );
 };
 
 const getHandStorageKey = (roomId: string, seat: string): string => `${roomId}:${seat}:hand`;
@@ -158,23 +175,18 @@ export function GamePage() {
         headers['If-None-Match'] = etagRef.current;
       }
 
-      const response = await fetch(`/api/rooms/${encodeURIComponent(session.room)}`, {
-        method: 'GET',
-        headers,
-        cache: 'no-cache',
-      });
+      const { response, data, notModified } = await fetchJson<RoomState>(
+        `/api/rooms/${encodeURIComponent(session.room)}`,
+        {
+          method: 'GET',
+          headers,
+          cache: 'no-cache',
+        },
+      );
 
-      if (response.status === 304) {
+      if (notModified) {
         setError(null);
         return;
-      }
-
-      const payload = (await response.json()) as RoomState & {
-        error?: string;
-      };
-
-      if (!response.ok) {
-        throw new Error(payload.error ?? 'Failed to load room state.');
       }
 
       const etag = response.headers.get('etag');
@@ -182,10 +194,15 @@ export function GamePage() {
         etagRef.current = etag;
       }
 
-      setRoomState(payload ?? null);
+      if (!data) {
+        throw new Error('Room state response was empty.');
+      }
+
+      setRoomState(data);
       setError(null);
     } catch (loadError) {
-      const message = loadError instanceof Error ? loadError.message : 'Failed to load room state.';
+      const message =
+        loadError instanceof Error ? loadError.message : 'Failed to load room state.';
       setError(message);
       showToast(message);
     } finally {
@@ -198,7 +215,11 @@ export function GamePage() {
       return;
     }
 
-    const response = await fetch(`/api/rooms/${encodeURIComponent(session.room)}/join`, {
+    const { response, data } = await fetchJson<{
+      room?: RoomState;
+      privateDelta?: PrivateDelta;
+      error?: string;
+    }>(`/api/rooms/${encodeURIComponent(session.room)}/join`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -209,16 +230,8 @@ export function GamePage() {
       }),
     });
 
-    const payload = (await response.json()) as {
-      room?: RoomState;
-      privateDelta?: PrivateDelta;
-      error?: string;
-    };
-
-    if (!response.ok) {
-      const message = payload.error ?? 'Failed to join room.';
-      showToast(message);
-      throw new Error(message);
+    if (!data) {
+      throw new Error('Join response was empty.');
     }
 
     const etag = response.headers.get('etag');
@@ -226,9 +239,9 @@ export function GamePage() {
       etagRef.current = etag;
     }
 
-    setRoomState(payload.room ?? null);
-    applyPrivateDelta(payload.privateDelta);
-  }, [applyPrivateDelta, session.room, session.seat, session.token, showToast]);
+    setRoomState(data.room ?? null);
+    applyPrivateDelta(data.privateDelta);
+  }, [applyPrivateDelta, session.room, session.seat, session.token]);
 
   useEffect(() => {
     setLoading(true);
@@ -309,7 +322,12 @@ export function GamePage() {
     setActionError(null);
 
     try {
-      const response = await fetch(`/api/rooms/${encodeURIComponent(session.room)}/act`, {
+      const { response, data } = await fetchJson<{
+        room?: RoomState;
+        privateDelta?: PrivateDelta;
+        latestState?: RoomState;
+        error?: string;
+      }>(`/api/rooms/${encodeURIComponent(session.room)}/act`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -323,23 +341,16 @@ export function GamePage() {
             type: 'END_TURN',
           },
         }),
-      });
-
-      const payload = (await response.json()) as {
-        room?: RoomState;
-        privateDelta?: PrivateDelta;
-        latestState?: RoomState;
-        error?: string;
-      };
+      }, { allowStatuses: [409] });
 
       if (!response.ok) {
-        if (response.status === 409 && payload.latestState) {
-          setRoomState(payload.latestState);
+        if (response.status === 409 && data?.latestState) {
+          setRoomState(data.latestState);
           showToast('State updated, try again.');
           return;
         }
 
-        throw new Error(payload.error ?? 'Failed to end turn.');
+        throw new Error(data?.error ?? 'Failed to end turn.');
       }
 
       const etag = response.headers.get('etag');
@@ -347,8 +358,8 @@ export function GamePage() {
         etagRef.current = etag;
       }
 
-      setRoomState(payload.room ?? null);
-      applyPrivateDelta(payload.privateDelta);
+      setRoomState(data?.room ?? null);
+      applyPrivateDelta(data?.privateDelta);
       setToastMessage(null);
     } catch (submitError) {
       const message = submitError instanceof Error ? submitError.message : 'Failed to end turn.';
@@ -373,7 +384,12 @@ export function GamePage() {
     setActionError(null);
 
     try {
-      const response = await fetch(`/api/rooms/${encodeURIComponent(session.room)}/act`, {
+      const { response, data } = await fetchJson<{
+        room?: RoomState;
+        privateDelta?: PrivateDelta;
+        latestState?: RoomState;
+        error?: string;
+      }>(`/api/rooms/${encodeURIComponent(session.room)}/act`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -388,23 +404,16 @@ export function GamePage() {
             ...(cardId ? { cardId } : {}),
           },
         }),
-      });
-
-      const payload = (await response.json()) as {
-        room?: RoomState;
-        privateDelta?: PrivateDelta;
-        latestState?: RoomState;
-        error?: string;
-      };
+      }, { allowStatuses: [409] });
 
       if (!response.ok) {
-        if (response.status === 409 && payload.latestState) {
-          setRoomState(payload.latestState);
+        if (response.status === 409 && data?.latestState) {
+          setRoomState(data.latestState);
           showToast('State updated, try your action again.');
           return;
         }
 
-        throw new Error(payload.error ?? 'Failed to pick asset.');
+        throw new Error(data?.error ?? 'Failed to pick asset.');
       }
 
       const etag = response.headers.get('etag');
@@ -412,8 +421,8 @@ export function GamePage() {
         etagRef.current = etag;
       }
 
-      setRoomState(payload.room ?? null);
-      applyPrivateDelta(payload.privateDelta);
+      setRoomState(data?.room ?? null);
+      applyPrivateDelta(data?.privateDelta);
     } catch (submitError) {
       const message = submitError instanceof Error ? submitError.message : 'Failed to pick asset.';
       setActionError(message);
@@ -435,7 +444,12 @@ export function GamePage() {
     setActionError(null);
 
     try {
-      const response = await fetch(`/api/rooms/${encodeURIComponent(session.room)}/act`, {
+      const { response, data } = await fetchJson<{
+        room?: RoomState;
+        privateDelta?: PrivateDelta;
+        latestState?: RoomState;
+        error?: string;
+      }>(`/api/rooms/${encodeURIComponent(session.room)}/act`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -450,23 +464,16 @@ export function GamePage() {
             cardId,
           },
         }),
-      });
-
-      const payload = (await response.json()) as {
-        room?: RoomState;
-        privateDelta?: PrivateDelta;
-        latestState?: RoomState;
-        error?: string;
-      };
+      }, { allowStatuses: [409] });
 
       if (!response.ok) {
-        if (response.status === 409 && payload.latestState) {
-          setRoomState(payload.latestState);
+        if (response.status === 409 && data?.latestState) {
+          setRoomState(data.latestState);
           showToast('State updated, try your action again.');
           return;
         }
 
-        throw new Error(payload.error ?? 'Failed to discard asset.');
+        throw new Error(data?.error ?? 'Failed to discard asset.');
       }
 
       const etag = response.headers.get('etag');
@@ -474,8 +481,8 @@ export function GamePage() {
         etagRef.current = etag;
       }
 
-      setRoomState(payload.room ?? null);
-      applyPrivateDelta(payload.privateDelta);
+      setRoomState(data?.room ?? null);
+      applyPrivateDelta(data?.privateDelta);
     } catch (submitError) {
       const message =
         submitError instanceof Error ? submitError.message : 'Failed to discard asset.';
@@ -486,7 +493,7 @@ export function GamePage() {
 
   const roomLink = useMemo(() => {
     const params = new URLSearchParams({ room: session.room });
-    return `${window.location.origin}/game?${params.toString()}`;
+    return `${window.location.origin}/play?${params.toString()}`;
   }, [session.room]);
 
   const seatLink = useMemo(() => {
@@ -495,7 +502,7 @@ export function GamePage() {
       seat: session.seat,
       token: session.token,
     });
-    return `${window.location.origin}/game?${params.toString()}`;
+    return `${window.location.origin}/play?${params.toString()}`;
   }, [session.room, session.seat, session.token]);
 
   const copyLink = useCallback(
@@ -530,6 +537,8 @@ export function GamePage() {
   const mustDiscard = Boolean(mySeatState?.mustDiscard);
   const discardTarget = mySeatState?.discardTarget ?? 7;
   const marketAssets = roomState?.market?.availableAssets ?? [];
+  const marketProjects = roomState?.market?.availableProjects ?? [];
+  const isStateInitialized = hasInitializedState(roomState);
 
   const canEndTurn =
     !isGameOver &&
@@ -608,10 +617,22 @@ export function GamePage() {
               {marketAssets.length > 0 ? marketAssets.join(', ') : '(empty)'}
             </dd>
           </div>
+          <div>
+            <dt className="font-medium text-slate-300">Market Projects</dt>
+            <dd className="text-slate-100">
+              {marketProjects.length > 0 ? marketProjects.join(', ') : '(empty)'}
+            </dd>
+          </div>
         </dl>
 
         <div className="mt-4 rounded-md border border-indigo-700 bg-indigo-900/20 px-3 py-2 text-sm text-indigo-100">
-          {loading && !roomState ? 'Loading room state…' : turnBanner}
+          {loading && !roomState
+            ? 'Loading room state…'
+            : !roomState
+              ? 'No state yet.'
+              : !isStateInitialized
+                ? 'State loaded but missing required fields.'
+                : turnBanner}
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">

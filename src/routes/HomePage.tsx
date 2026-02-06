@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageShell } from '../components/PageShell';
+import { fetchJson } from '../lib/http';
 
 type InviteLink = {
   seat: string;
@@ -97,7 +98,13 @@ export function HomePage() {
     setCopiedSeat(null);
 
     try {
-      const response = await fetch('/api/rooms', {
+      const { data } = await fetchJson<
+        | CreateRoomResult
+        | {
+            error?: string;
+            details?: string;
+          }
+      >('/api/rooms', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -105,23 +112,11 @@ export function HomePage() {
         body: JSON.stringify({ playerCount }),
       });
 
-      const payload = (await response.json()) as
-        | CreateRoomResult
-        | {
-            error?: string;
-            details?: string;
-          };
-
-      if (!response.ok) {
-        const errorPayload = payload as {
-          error?: string;
-          details?: string;
-        };
-        const details = errorPayload.details ? ` ${errorPayload.details}` : '';
-        throw new Error((errorPayload.error ?? 'Failed to create game.') + details);
+      if (!data) {
+        throw new Error('Failed to create game: empty response body.');
       }
 
-      setResult(payload as CreateRoomResult);
+      setResult(data as CreateRoomResult);
     } catch (error) {
       setCreateError(error instanceof Error ? error.message : 'Failed to create game.');
       setResult(null);

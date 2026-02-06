@@ -1,55 +1,7 @@
 import { githubRequest, hashToken, randomSeatToken, randomTurnNonce } from '../_lib/github.js';
-import { buildInitialDeckState } from '../_lib/roomSetup.js';
+import { createInitialGameState } from '../_lib/roomSetup.js';
 
 const SEAT_ORDER = ['A', 'B', 'C', 'D'];
-
-function buildInitialPublicState(playerCount, seatTokenHashes) {
-  const seats = {};
-  const playerSeats = SEAT_ORDER.slice(0, playerCount);
-
-  for (const seat of playerSeats) {
-    seats[seat] = {
-      connected: false,
-      handSize: 2,
-      mustDiscard: false,
-      discardTarget: null,
-      projects: [],
-      projectsStartedThisRound: 0,
-      lastHandHash: null,
-      tokenHash: seatTokenHashes[seat],
-      publicFlags: {
-        hasDefense: false,
-        hasAcceleration: false,
-      },
-    };
-  }
-
-  const { decks, market, dealQueue } = buildInitialDeckState(playerSeats);
-
-  return {
-    schemaVersion: 1,
-    version: 1,
-    roomId: '',
-    createdAt: new Date().toISOString(),
-    currentRound: 1,
-    totalRounds: 3,
-    currentSeat: 'A',
-    turnNonce: randomTurnNonce(),
-    seats,
-    market,
-    turnCount: 0,
-    pendingRoundAdvance: false,
-    mustDiscardBySeat: {},
-    macroEvent: null,
-    roundModifiers: [],
-    gameOver: false,
-    finalScoring: null,
-    discardPileCount: 0,
-    decks,
-    dealQueue,
-    notes: ['TODO: load real deck data and reducer transitions.'],
-  };
-}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -65,14 +17,19 @@ export default async function handler(req, res) {
 
     const seatTokens = {};
     const seatTokenHashes = {};
+    const playerSeats = SEAT_ORDER.slice(0, playerCount);
 
-    for (const seat of SEAT_ORDER.slice(0, playerCount)) {
+    for (const seat of playerSeats) {
       const token = randomSeatToken();
       seatTokens[seat] = token;
       seatTokenHashes[seat] = hashToken(token);
     }
 
-    const roomState = buildInitialPublicState(playerCount, seatTokenHashes);
+    const roomState = createInitialGameState({
+      playerSeats,
+      seatTokenHashes,
+    });
+    roomState.turnNonce = randomTurnNonce();
 
     const gistResponse = await githubRequest('/gists', {
       method: 'POST',
